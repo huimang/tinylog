@@ -43,17 +43,25 @@ pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
 }
 
 /// Reads only the currently visible window from one prototype tinylog file.
-pub fn read_visible_window(path: &str, visible_count: usize) -> Result<VisibleLogWindow, String> {
+pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize) -> Result<VisibleLogWindow, String> {
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
     let compression_algorithm = CompressionAlgorithm::from_id(read_u16_from_reader(&mut reader)?)?;
     let start_timestamp_millis = read_u64_from_reader(&mut reader)?;
     let total_records = read_u64_from_reader(&mut reader)?;
+    let total_records_usize = usize::try_from(total_records).unwrap_or(usize::MAX);
+    let start_index = usize::min(start_index, total_records_usize);
     let visible_count = usize::min(
         visible_count,
-        usize::try_from(total_records).unwrap_or(usize::MAX),
+        total_records_usize.saturating_sub(start_index),
     );
     let mut visible_entries = Vec::with_capacity(visible_count);
+
+    for _ in 0..start_index {
+        let _offset_millis = read_u32_from_reader(&mut reader)?;
+        let content_length = read_u24_from_reader(&mut reader)? as usize;
+        skip_exact(&mut reader, content_length)?;
+    }
 
     for _ in 0..visible_count {
         let offset_millis = read_u32_from_reader(&mut reader)?;
@@ -207,6 +215,20 @@ fn read_all_from_decoder(mut reader: impl Read) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
+/// Consumes a known number of bytes from a stream without decoding them.
+fn skip_exact(reader: &mut impl Read, length: usize) -> Result<(), String> {
+    let mut remaining = length;
+    let mut buffer = [0_u8; 1024];
+    while remaining > 0 {
+        let chunk = usize::min(buffer.len(), remaining);
+        reader
+            .read_exact(&mut buffer[..chunk])
+            .map_err(|_| "prototype log file is truncated".to_string())?;
+        remaining -= chunk;
+    }
+    Ok(())
+}
+
 /// Supports deterministic byte parsing without introducing extra dependencies.
 #[allow(dead_code)]
 struct CursorReader<'a> {
@@ -341,7 +363,7 @@ mod tests {
         )
         .expect("write prototype file");
 
-        let window = read_visible_window(&path.to_string_lossy(), 1).expect("read visible window");
+        let window = read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
 
         assert_eq!(window.total_records, 2);
         assert_eq!(window.visible_entries.len(), 1);
@@ -375,9 +397,38 @@ mod tests {
         bytes.extend_from_slice(&gzip_payload);
         fs::write(&path, bytes).expect("write gzip prototype file");
 
-        let window = read_visible_window(&path.to_string_lossy(), 1).expect("read visible window");
+        let window = read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
 
         assert_eq!(window.visible_entries[0].content, "alpha");
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
+    fn read_visible_window_skips_hidden_records_without_decoding() {
+        let path = std::env::temp_dir().join(format!(
+            "tinylog-visible-skip-{}.tog",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            vec![
+                0, 0,
+                0, 0, 1, 139, 207, 229, 104, 0,
+                0, 0, 0, 0, 0, 0, 0, 2,
+                0, 0, 0, 0, 0, 0, 2, b'b', b'a',
+                0, 0, 0, 25, 0, 0, 4, b'b', b'e', b't', b'a',
+            ],
+        )
+        .expect("write prototype file");
+
+        let window = read_visible_window(&path.to_string_lossy(), 1, 1).expect("read visible window");
+
+        assert_eq!(window.visible_entries.len(), 1);
+        assert_eq!(window.visible_entries[0].content, "beta");
 
         fs::remove_file(path).expect("cleanup file");
     }

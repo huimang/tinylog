@@ -1,5 +1,10 @@
-use crate::format;
 use crate::config::ViewerConfig;
+use crate::session::InteractiveViewerSession;
+use crossterm::cursor;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::execute;
+use crossterm::terminal::{self, ClearType};
+use std::io::{self, Write};
 
 /// Coordinates top-level viewer behavior for the CLI entrypoint.
 #[derive(Debug, Clone)]
@@ -21,58 +26,94 @@ impl ViewerApplication {
         }
     }
 
-    /// Opens the configured file and renders a prototype browsing result.
-    pub fn run(&self) -> Result<String, String> {
-        match self.config.log_file.as_deref() {
-            Some(path) => {
-                let window = format::read_visible_window(path, self.config.page_size)?;
-                let mut lines = Vec::new();
-                lines.push(format!(
-                    "tinylog viewer opened {path} with {} records.",
-                    window.total_records
-                ));
-                for entry in &window.visible_entries {
-                    lines.push(format!(
-                        "{} {}",
-                        format::format_timestamp_millis(entry.timestamp_millis)?,
-                        entry.content
-                    ));
-                }
-                if usize::try_from(window.total_records).unwrap_or(usize::MAX) > window.visible_entries.len() {
-                    lines.push(format!(
-                        "... {} more records omitted",
-                        usize::try_from(window.total_records).unwrap_or(usize::MAX) - window.visible_entries.len()
-                    ));
-                }
-                Ok(lines.join("\n"))
+    /// Opens the configured file and enters an interactive browsing loop.
+    pub fn run(&self) -> Result<(), String> {
+        let log_file = match self.config.log_file.clone() {
+            Some(path) => path,
+            None => {
+                println!("{}", self.banner());
+                return Ok(());
             }
-            None => Ok(self.banner()),
+        };
+
+        let mut session = InteractiveViewerSession::open(log_file, self.config.page_size)?;
+        let mut stdout = io::stdout();
+        terminal::enable_raw_mode().map_err(|error| format!("failed to enable raw mode: {error}"))?;
+        execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)
+            .map_err(|error| format!("failed to enter alternate screen: {error}"))?;
+
+        let result = self.run_loop(&mut session, &mut stdout);
+
+        let cleanup_result = execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen)
+            .map_err(|error| format!("failed to leave alternate screen: {error}"));
+        let raw_mode_result =
+            terminal::disable_raw_mode().map_err(|error| format!("failed to disable raw mode: {error}"));
+
+        result?;
+        cleanup_result?;
+        raw_mode_result?;
+        Ok(())
+    }
+
+    /// Runs the blocking event loop until the user exits.
+    fn run_loop(
+        &self,
+        session: &mut InteractiveViewerSession,
+        stdout: &mut io::Stdout,
+    ) -> Result<(), String> {
+        loop {
+            let (_, height) =
+                terminal::size().map_err(|error| format!("failed to query terminal size: {error}"))?;
+            self.render(session, usize::from(height), stdout)?;
+            let event = event::read().map_err(|error| format!("failed to read key event: {error}"))?;
+            if let Event::Key(key) = event {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('j') | KeyCode::Down => session.move_down(),
+                    KeyCode::Char('k') | KeyCode::Up => session.move_up(),
+                    KeyCode::Char('d') if key.modifiers.is_empty() => session.page_down(usize::from(height)),
+                    KeyCode::Char('u') if key.modifiers.is_empty() => session.page_up(usize::from(height)),
+                    KeyCode::PageDown => session.page_down(usize::from(height)),
+                    KeyCode::PageUp => session.page_up(usize::from(height)),
+                    KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                        session.move_to_bottom(usize::from(height))
+                    }
+                    KeyCode::Char('g') => session.move_to_top(),
+                    KeyCode::Char('G') => session.move_to_bottom(usize::from(height)),
+                    _ => {}
+                }
+            }
         }
+    }
+
+    /// Draws the current page to the terminal.
+    fn render(
+        &self,
+        session: &InteractiveViewerSession,
+        height: usize,
+        stdout: &mut io::Stdout,
+    ) -> Result<(), String> {
+        let lines = session.render_lines(height)?;
+        execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(ClearType::All))
+            .map_err(|error| format!("failed to clear screen: {error}"))?;
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                writeln!(stdout).map_err(|error| format!("failed to write newline: {error}"))?;
+            }
+            write!(stdout, "{line}").map_err(|error| format!("failed to write line: {error}"))?;
+        }
+        stdout.flush().map_err(|error| format!("failed to flush output: {error}"))?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    use crate::config::ViewerConfig;
-    use crate::format;
-
     use super::ViewerApplication;
-
-    /**
-     * Builds one valid two-record prototype file for viewer-side tests.
-     */
-    fn sample_bytes() -> Vec<u8> {
-        vec![
-            0, 0,
-            0, 0, 1, 139, 207, 229, 104, 0,
-            0, 0, 0, 0, 0, 0, 0, 2,
-            0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
-            0, 0, 0, 25, 0, 0, 4, b'b', b'e', b't', b'a',
-        ]
-    }
+    use crate::config::ViewerConfig;
 
     #[test]
     fn banner_contains_target_file_when_provided() {
@@ -85,34 +126,5 @@ mod tests {
             app.banner(),
             "tinylog viewer scaffold initialized for demo.tog."
         );
-    }
-
-    #[test]
-    fn run_renders_records_from_prototype_file() {
-        let path = std::env::temp_dir().join(format!(
-            "tinylog-viewer-test-{}.tog",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        fs::write(
-            &path,
-            sample_bytes(),
-        )
-        .expect("write prototype file");
-
-        let mut config = ViewerConfig::default();
-        config.log_file = Some(path.to_string_lossy().into_owned());
-
-        let output = ViewerApplication::new(config).run().expect("viewer output");
-
-        assert!(output.contains("tinylog viewer opened"));
-        assert!(output.contains(&format::format_timestamp_millis(1_700_000_000_000).expect("format time")));
-        assert!(!output.contains("+25ms"));
-        assert!(output.contains("alpha"));
-        assert!(output.contains("beta"));
-
-        fs::remove_file(path).expect("cleanup file");
     }
 }

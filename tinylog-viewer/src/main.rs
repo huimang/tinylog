@@ -15,7 +15,7 @@ fn main() {
     }
 
     match ViewerApplication::new(config).run() {
-        Ok(output) => println!("{output}"),
+        Ok(()) => {}
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(1);

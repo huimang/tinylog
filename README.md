@@ -170,16 +170,29 @@ converted normal.log to normal.tog using gzip
 cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- normal.tog
 ```
 
-Expected output shape:
+Key bindings:
 
 ```text
-tinylog viewer opened normal.tog with 3 records.
+j / DownArrow   move down
+k / UpArrow     move up
+d / PageDown    page down
+u / PageUp      page up
+g               jump to top
+G               jump to bottom
+q               quit
+```
+
+Expected screen content:
+
+```text
+tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  d/u page  g/G ends  q quit
+
 2026-05-01 22:01:00,253 service started
 2026-05-01 22:01:00,278 user signed in
 2026-05-01 22:01:00,353 order created
 ```
 
-The viewer only reads and decodes the currently visible page of records. Records outside the visible window are left untouched until they are needed.
+The viewer stays open like a lightweight vim-style browser. It only reads and decodes the currently visible page of records. Records outside the visible window are left untouched until they are needed.
 
 ### 4. Re-run the automated converter test only
 
