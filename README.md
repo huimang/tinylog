@@ -155,8 +155,8 @@ EOF
 ### 2. Convert `normal.log` to `normal.tog`
 
 ```bash
-mvn -q -pl tinylog-core -am compile
-java -cp tinylog-core/target/classes com.huimang.tinylog.core.io.PlainTextLogToTinylogCli normal.log normal.tog
+mvn -q -pl tinylog-core -am package
+java -jar tinylog-core/target/tinylog-core-0.1.0-SNAPSHOT-all.jar normal.log normal.tog
 ```
 
 Expected output:
