@@ -87,6 +87,33 @@ Recommended workflow:
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
 - **Rust viewer**: standalone Cargo project under `tinylog-viewer`
 
+## Prototype File Format / 当前原型格式
+
+The current prototype uses a compact binary layout in **big-endian** order:
+
+1. **Start timestamp**: 8 bytes, milliseconds since epoch
+2. **Record count**: 8 bytes
+3. Repeated for each record:
+   - **Millisecond offset** from the start timestamp: 4 bytes
+   - **Content length**: 3 bytes
+   - **Content bytes**: UTF-8 payload
+
+In other words:
+
+```text
+[startTimestamp:8][recordCount:8]
+[offset:4][contentLength:3][content:N]
+[offset:4][contentLength:3][content:N]
+...
+```
+
+Current prototype notes:
+
+- The Java prototype writer stores the rendered log **message** as the payload
+- The Java prototype reader rebuilds `LogRecord` instances using the decoded message
+- The Rust viewer reads the same binary format directly and prints timestamps plus content
+- This prototype focuses on validating the binary framing first, before adding richer structured payloads and indexes
+
 ## Near-Term Roadmap / 下一阶段建议
 
 1. Define the tinylog file header, block layout, and index structure

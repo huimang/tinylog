@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod format;
 mod session;
 
 use app::ViewerApplication;
@@ -13,5 +14,11 @@ fn main() {
         config.log_file = Some(path);
     }
 
-    println!("{}", ViewerApplication::new(config).banner());
+    match ViewerApplication::new(config).run() {
+        Ok(output) => println!("{output}"),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
 }
