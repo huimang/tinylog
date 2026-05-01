@@ -122,16 +122,18 @@ Current prototype notes:
 The current prototype accepts plaintext log lines in this format:
 
 ```text
-<epochMillis> <message>
+<yyyy-MM-dd HH:mm:ss,SSS> <message>
 ```
+
+The converter interprets that local timestamp using the **system default time zone** of the machine running the conversion.
 
 ### 1. Create a sample `normal.log`
 
 ```bash
 cat > normal.log <<'EOF'
-1700000000000 service started
-1700000000025 user signed in
-1700000000100 order created
+2026-05-01 22:01:00,253 service started
+2026-05-01 22:01:00,278 user signed in
+2026-05-01 22:01:00,353 order created
 EOF
 ```
 
@@ -158,9 +160,9 @@ Expected output shape:
 
 ```text
 tinylog viewer opened normal.tog with 3 records.
-1700000000000 | +0ms | service started
-1700000000025 | +25ms | user signed in
-1700000000100 | +100ms | order created
+<epochMillis> | +0ms | service started
+<epochMillis + 25> | +25ms | user signed in
+<epochMillis + 100> | +100ms | order created
 ```
 
 ### 4. Re-run the automated converter test only

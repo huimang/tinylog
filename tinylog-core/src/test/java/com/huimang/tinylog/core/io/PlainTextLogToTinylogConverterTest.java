@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -26,8 +28,8 @@ public class PlainTextLogToTinylogConverterTest {
         Files.write(
                 normalLogPath,
                 java.util.Arrays.asList(
-                        "1700000000000 service started",
-                        "1700000000025 user signed in"),
+                        "2026-05-01 22:01:00,253 service started",
+                        "2026-05-01 22:01:00,278 user signed in"),
                 StandardCharsets.UTF_8);
 
         new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath);
@@ -38,8 +40,8 @@ public class PlainTextLogToTinylogConverterTest {
         }
 
         assertEquals(2, records.size());
-        assertEquals(1700000000000L, records.get(0).getTimestampMillis());
-        assertEquals(1700000000025L, records.get(1).getTimestampMillis());
+        assertEquals(toEpochMillis("2026-05-01 22:01:00,253"), records.get(0).getTimestampMillis());
+        assertEquals(toEpochMillis("2026-05-01 22:01:00,278"), records.get(1).getTimestampMillis());
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
     }
@@ -47,13 +49,32 @@ public class PlainTextLogToTinylogConverterTest {
     @Test
     void shouldRejectNonTogOutputFiles() throws IOException {
         Path normalLogPath = tempDir.resolve("normal.log");
-        Files.write(normalLogPath, Collections.singletonList("1700000000000 service started"), StandardCharsets.UTF_8);
+        Files.write(
+                normalLogPath,
+                Collections.singletonList("2026-05-01 22:01:00,253 service started"),
+                StandardCharsets.UTF_8);
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> new PlainTextLogToTinylogConverter().convert(normalLogPath, tempDir.resolve("normal.log.bin")));
 
         assertEquals("tinylog files must use the .tog extension", error.getMessage());
+    }
+
+    @Test
+    void shouldRejectInvalidPlainTextTimestamp() throws IOException {
+        Path normalLogPath = tempDir.resolve("normal.log");
+        Path tinylogPath = tempDir.resolve("normal.tog");
+        Files.write(
+                normalLogPath,
+                Collections.singletonList("2026-05-01 22:01:xx,253 service started"),
+                StandardCharsets.UTF_8);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath));
+
+        assertEquals("invalid timestamp at " + normalLogPath + ":1", error.getMessage());
     }
 
     /**
@@ -65,5 +86,29 @@ public class PlainTextLogToTinylogConverterTest {
             result.add(iterator.next());
         }
         return Collections.unmodifiableList(result);
+    }
+
+    /**
+     * Converts one local timestamp string to epoch milliseconds using the host zone.
+     */
+    private static long toEpochMillis(String value) {
+        return LocalDateTime.parse(value, DateTimeFormatterHolder.TIMESTAMP_FORMATTER)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+    }
+
+    /**
+     * Holds shared test parsing rules without duplicating formatter literals.
+     */
+    private static final class DateTimeFormatterHolder {
+        /**
+         * Matches the plaintext timestamp format accepted by the converter.
+         */
+        private static final java.time.format.DateTimeFormatter TIMESTAMP_FORMATTER =
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+
+        private DateTimeFormatterHolder() {
+        }
     }
 }

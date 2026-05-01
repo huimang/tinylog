@@ -6,6 +6,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Objects;
 
@@ -14,10 +18,21 @@ import java.util.Objects;
  */
 public final class PlainTextLogToTinylogConverter {
     /**
+     * Defines the timestamp pattern used by the source plaintext log file.
+     */
+    private static final DateTimeFormatter TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+
+    /**
+     * Defines the fixed character width of one leading plaintext timestamp.
+     */
+    private static final int TIMESTAMP_TEXT_LENGTH = 23;
+
+    /**
      * Converts one plaintext log file to one tinylog prototype file.
      *
      * <p>The current prototype accepts lines in the form:
-     * {@code <epochMillis><space><message>}
+     * {@code <yyyy-MM-dd HH:mm:ss,SSS><space><message>}
      */
     public void convert(Path plainTextLogPath, Path tinylogPath) throws IOException {
         Objects.requireNonNull(plainTextLogPath, "plainTextLogPath");
@@ -52,20 +67,24 @@ public final class PlainTextLogToTinylogConverter {
      * Parses one plaintext line into a prototype log record.
      */
     private LogRecord parseLine(Path plainTextLogPath, int lineNumber, String line) {
-        int separatorIndex = line.indexOf(' ');
-        if (separatorIndex <= 0 || separatorIndex == line.length() - 1) {
+        if (line.length() <= TIMESTAMP_TEXT_LENGTH + 1 || line.charAt(TIMESTAMP_TEXT_LENGTH) != ' ') {
             throw new IllegalArgumentException("invalid log line at "
                     + plainTextLogPath + ":" + lineNumber
-                    + ", expected '<epochMillis> <message>'");
+                    + ", expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'");
         }
         long timestampMillis;
         try {
-            timestampMillis = Long.parseLong(line.substring(0, separatorIndex));
-        } catch (NumberFormatException exception) {
+            timestampMillis = LocalDateTime.parse(
+                    line.substring(0, TIMESTAMP_TEXT_LENGTH),
+                    TIMESTAMP_FORMATTER)
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli();
+        } catch (DateTimeParseException exception) {
             throw new IllegalArgumentException("invalid timestamp at "
                     + plainTextLogPath + ":" + lineNumber, exception);
         }
-        String message = line.substring(separatorIndex + 1);
+        String message = line.substring(TIMESTAMP_TEXT_LENGTH + 1);
         return new LogRecord(
                 timestampMillis,
                 LogLevel.INFO,
