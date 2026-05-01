@@ -34,7 +34,9 @@ impl ViewerApplication {
                 for entry in entries.iter().take(self.config.page_size) {
                     lines.push(format!(
                         "{} | +{}ms | {}",
-                        entry.timestamp_millis, entry.offset_millis, entry.content
+                        format::format_timestamp_millis(entry.timestamp_millis)?,
+                        entry.offset_millis,
+                        entry.content
                     ));
                 }
                 if entries.len() > self.config.page_size {
@@ -56,6 +58,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::config::ViewerConfig;
+    use crate::format;
 
     use super::ViewerApplication;
 
@@ -105,6 +108,7 @@ mod tests {
         let output = ViewerApplication::new(config).run().expect("viewer output");
 
         assert!(output.contains("tinylog viewer opened"));
+        assert!(output.contains(&format::format_timestamp_millis(1_700_000_000_000).expect("format time")));
         assert!(output.contains("alpha"));
         assert!(output.contains("beta"));
 

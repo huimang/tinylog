@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use std::fs;
 
 /// Represents one rendered log entry parsed from the prototype binary format.
@@ -12,6 +13,17 @@ pub struct ParsedLogEntry {
 pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
     let bytes = fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     parse_bytes(&bytes)
+}
+
+/// Formats epoch milliseconds as a human-readable local timestamp.
+pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> {
+    let timestamp_millis =
+        i64::try_from(timestamp_millis).map_err(|_| "timestamp exceeds supported range".to_string())?;
+    let date_time = Local
+        .timestamp_millis_opt(timestamp_millis)
+        .single()
+        .ok_or_else(|| "timestamp cannot be represented in the local time zone".to_string())?;
+    Ok(date_time.format("%Y-%m-%d %H:%M:%S,%3f").to_string())
 }
 
 /// Parses bytes using the current prototype layout.
@@ -91,7 +103,7 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_bytes;
+    use super::{format_timestamp_millis, parse_bytes};
 
     /**
      * Builds one valid two-record prototype buffer for parser tests.
@@ -125,5 +137,18 @@ mod tests {
         let error = parse_bytes(&bytes).expect_err("truncate error");
 
         assert!(error.contains("truncated"));
+    }
+
+    #[test]
+    fn format_timestamp_renders_normal_log_shape() {
+        let value = format_timestamp_millis(1_777_658_460_253).expect("format timestamp");
+
+        assert_eq!(value.len(), 23);
+        assert_eq!(&value[4..5], "-");
+        assert_eq!(&value[7..8], "-");
+        assert_eq!(&value[10..11], " ");
+        assert_eq!(&value[13..14], ":");
+        assert_eq!(&value[16..17], ":");
+        assert_eq!(&value[19..20], ",");
     }
 }

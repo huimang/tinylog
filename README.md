@@ -160,9 +160,9 @@ Expected output shape:
 
 ```text
 tinylog viewer opened normal.tog with 3 records.
-<epochMillis> | +0ms | service started
-<epochMillis + 25> | +25ms | user signed in
-<epochMillis + 100> | +100ms | order created
+2026-05-01 22:01:00,253 | +0ms | service started
+2026-05-01 22:01:00,278 | +25ms | user signed in
+2026-05-01 22:01:00,353 | +100ms | order created
 ```
 
 ### 4. Re-run the automated converter test only
