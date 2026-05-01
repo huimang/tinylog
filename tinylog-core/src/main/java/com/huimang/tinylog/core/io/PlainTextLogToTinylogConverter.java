@@ -29,6 +29,25 @@ public final class PlainTextLogToTinylogConverter {
     private static final int TIMESTAMP_TEXT_LENGTH = 23;
 
     /**
+     * Stores the compression algorithm used for converted line bodies.
+     */
+    private final CompressionAlgorithm compressionAlgorithm;
+
+    /**
+     * Creates a converter that uses the prototype default compression algorithm.
+     */
+    public PlainTextLogToTinylogConverter() {
+        this(PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM);
+    }
+
+    /**
+     * Creates a converter that uses the selected line-body compression algorithm.
+     */
+    public PlainTextLogToTinylogConverter(CompressionAlgorithm compressionAlgorithm) {
+        this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
+    }
+
+    /**
      * Converts one plaintext log file to one tinylog prototype file.
      *
      * <p>The current prototype accepts lines in the form:
@@ -40,7 +59,7 @@ public final class PlainTextLogToTinylogConverter {
         validateTinylogPath(tinylogPath);
 
         List<String> lines = Files.readAllLines(plainTextLogPath, StandardCharsets.UTF_8);
-        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(tinylogPath)) {
+        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(tinylogPath, compressionAlgorithm)) {
             int lineNumber = 0;
             for (String line : lines) {
                 lineNumber++;

@@ -1,6 +1,11 @@
+use bzip2::read::BzDecoder;
 use chrono::{Local, TimeZone};
+use flate2::read::{DeflateDecoder, GzDecoder};
+use snap::read::FrameDecoder;
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Cursor, Read};
+use xz2::read::XzDecoder;
+use zip::ZipArchive;
 
 /// Holds the total record count together with the currently visible entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +22,19 @@ pub struct ParsedLogEntry {
     pub content: String,
 }
 
+/// Enumerates the supported header-level message compression algorithms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionAlgorithm {
+    None,
+    Gzip,
+    Zip,
+    Deflate,
+    Bzip2,
+    Xz,
+    Zstd,
+    Snappy,
+}
+
 /// Reads and parses one prototype tinylog file from disk.
 #[allow(dead_code)]
 pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
@@ -28,6 +46,7 @@ pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
 pub fn read_visible_window(path: &str, visible_count: usize) -> Result<VisibleLogWindow, String> {
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
+    let compression_algorithm = CompressionAlgorithm::from_id(read_u8_from_reader(&mut reader)?)?;
     let start_timestamp_millis = read_u64_from_reader(&mut reader)?;
     let total_records = read_u64_from_reader(&mut reader)?;
     let visible_count = usize::min(
@@ -43,7 +62,7 @@ pub fn read_visible_window(path: &str, visible_count: usize) -> Result<VisibleLo
         reader
             .read_exact(&mut content_bytes)
             .map_err(|_| "prototype log file is truncated".to_string())?;
-        let content = String::from_utf8(content_bytes)
+        let content = String::from_utf8(compression_algorithm.decompress(content_bytes)?)
             .map_err(|error| format!("invalid utf-8 log content: {error}"))?;
         visible_entries.push(ParsedLogEntry {
             timestamp_millis: start_timestamp_millis + u64::from(offset_millis),
@@ -72,7 +91,8 @@ pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> 
 /// Parses bytes using the current prototype layout.
 #[allow(dead_code)]
 pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
-    let mut cursor = Cursor::new(bytes);
+    let mut cursor = CursorReader::new(bytes);
+    let compression_algorithm = CompressionAlgorithm::from_id(cursor.read_u8()?)?;
     let start_timestamp_millis = cursor.read_u64()?;
     let record_count = cursor.read_u64()?;
     let mut entries = Vec::new();
@@ -81,7 +101,7 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
         let offset_millis = cursor.read_u32()?;
         let content_length = cursor.read_u24()? as usize;
         let content_bytes = cursor.read_exact(content_length)?;
-        let content = String::from_utf8(content_bytes.to_vec())
+        let content = String::from_utf8(compression_algorithm.decompress(content_bytes.to_vec())?)
             .map_err(|error| format!("invalid utf-8 log content: {error}"))?;
         entries.push(ParsedLogEntry {
             timestamp_millis: start_timestamp_millis + u64::from(offset_millis),
@@ -95,6 +115,60 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
     }
 
     Ok(entries)
+}
+
+impl CompressionAlgorithm {
+    /// Resolves one persisted algorithm identifier.
+    fn from_id(id: u8) -> Result<Self, String> {
+        match id {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Gzip),
+            2 => Ok(Self::Zip),
+            3 => Ok(Self::Deflate),
+            4 => Ok(Self::Bzip2),
+            5 => Ok(Self::Xz),
+            6 => Ok(Self::Zstd),
+            7 => Ok(Self::Snappy),
+            _ => Err(format!("unsupported compression algorithm id: {id}")),
+        }
+    }
+
+    /// Decompresses one record payload according to the selected header algorithm.
+    fn decompress(self, payload: Vec<u8>) -> Result<Vec<u8>, String> {
+        match self {
+            Self::None => Ok(payload),
+            Self::Gzip => read_all_from_decoder(GzDecoder::new(Cursor::new(payload))),
+            Self::Zip => {
+                let cursor = Cursor::new(payload);
+                let mut archive = ZipArchive::new(cursor)
+                    .map_err(|error| format!("invalid zip payload: {error}"))?;
+                if archive.is_empty() {
+                    return Err("zip payload does not contain an entry".to_string());
+                }
+                let mut entry = archive
+                    .by_index(0)
+                    .map_err(|error| format!("failed to open zip entry: {error}"))?;
+                read_all_from_decoder(&mut entry)
+            }
+            Self::Deflate => read_all_from_decoder(DeflateDecoder::new(Cursor::new(payload))),
+            Self::Bzip2 => read_all_from_decoder(BzDecoder::new(Cursor::new(payload))),
+            Self::Xz => read_all_from_decoder(XzDecoder::new(Cursor::new(payload))),
+            Self::Zstd => read_all_from_decoder(
+                zstd::stream::read::Decoder::new(Cursor::new(payload))
+                    .map_err(|error| format!("invalid zstd payload: {error}"))?,
+            ),
+            Self::Snappy => read_all_from_decoder(FrameDecoder::new(Cursor::new(payload))),
+        }
+    }
+}
+
+/// Reads one byte from a stream.
+fn read_u8_from_reader(reader: &mut impl Read) -> Result<u8, String> {
+    let mut bytes = [0_u8; 1];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    Ok(bytes[0])
 }
 
 /// Reads one big-endian 64-bit integer from a stream.
@@ -124,14 +198,23 @@ fn read_u24_from_reader(reader: &mut impl Read) -> Result<u32, String> {
     Ok((u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]))
 }
 
+/// Drains one decompression reader into a byte buffer.
+fn read_all_from_decoder(mut reader: impl Read) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    reader
+        .read_to_end(&mut output)
+        .map_err(|error| format!("failed to decompress payload: {error}"))?;
+    Ok(output)
+}
+
 /// Supports deterministic byte parsing without introducing extra dependencies.
 #[allow(dead_code)]
-struct Cursor<'a> {
+struct CursorReader<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
 
-impl<'a> Cursor<'a> {
+impl<'a> CursorReader<'a> {
     /// Creates a cursor over an immutable slice.
     fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
@@ -140,6 +223,11 @@ impl<'a> Cursor<'a> {
     /// Returns the number of unread bytes.
     fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.offset)
+    }
+
+    /// Reads one byte.
+    fn read_u8(&mut self) -> Result<u8, String> {
+        Ok(self.read_exact(1)?[0])
     }
 
     /// Reads one big-endian 64-bit integer.
@@ -175,7 +263,10 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::fs;
+    use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{format_timestamp_millis, parse_bytes, read_visible_window};
@@ -185,6 +276,7 @@ mod tests {
      */
     fn sample_bytes() -> Vec<u8> {
         vec![
+            0,
             0, 0, 1, 139, 207, 229, 104, 0,
             0, 0, 0, 0, 0, 0, 0, 2,
             0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -239,6 +331,7 @@ mod tests {
         fs::write(
             &path,
             vec![
+                0,
                 0, 0, 1, 139, 207, 229, 104, 0,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -251,6 +344,38 @@ mod tests {
 
         assert_eq!(window.total_records, 2);
         assert_eq!(window.visible_entries.len(), 1);
+        assert_eq!(window.visible_entries[0].content, "alpha");
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
+    fn read_visible_window_decompresses_gzip_payload() {
+        let path = std::env::temp_dir().join(format!(
+            "tinylog-visible-gzip-{}.tog",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let mut gzip_payload = Vec::new();
+        {
+            let mut encoder = GzEncoder::new(&mut gzip_payload, Compression::default());
+            encoder.write_all(b"alpha").expect("write gzip payload");
+            encoder.finish().expect("finish gzip payload");
+        }
+        let mut bytes = vec![1];
+        bytes.extend_from_slice(&[0, 0, 1, 139, 207, 229, 104, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.push(((gzip_payload.len() >> 16) & 0xFF) as u8);
+        bytes.push(((gzip_payload.len() >> 8) & 0xFF) as u8);
+        bytes.push((gzip_payload.len() & 0xFF) as u8);
+        bytes.extend_from_slice(&gzip_payload);
+        fs::write(&path, bytes).expect("write gzip prototype file");
+
+        let window = read_visible_window(&path.to_string_lossy(), 1).expect("read visible window");
+
         assert_eq!(window.visible_entries[0].content, "alpha");
 
         fs::remove_file(path).expect("cleanup file");

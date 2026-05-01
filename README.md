@@ -92,30 +92,44 @@ Recommended workflow:
 
 The current prototype uses a compact binary layout in **big-endian** order:
 
-1. **Start timestamp**: 8 bytes, milliseconds since epoch
-2. **Record count**: 8 bytes
-3. **File extension**: `.tog`
-4. Repeated for each record:
+1. **Compression algorithm**: 1 byte
+2. **Start timestamp**: 8 bytes, milliseconds since epoch
+3. **Record count**: 8 bytes
+4. **File extension**: `.tog`
+5. Repeated for each record:
    - **Millisecond offset** from the start timestamp: 4 bytes
-   - **Content length**: 3 bytes
-   - **Content bytes**: UTF-8 payload
+   - **Compressed content length**: 3 bytes
+   - **Compressed content bytes**: UTF-8 message payload after line-body compression
 
 In other words:
 
 ```text
-[startTimestamp:8][recordCount:8]
-[offset:4][contentLength:3][content:N]
-[offset:4][contentLength:3][content:N]
+[compression:1][startTimestamp:8][recordCount:8]
+[offset:4][compressedLength:3][compressedContent:N]
+[offset:4][compressedLength:3][compressedContent:N]
 ...
 ```
 
 Current prototype notes:
 
-- The Java prototype writer stores the rendered log **message** as the payload
+- The Java prototype writer stores the rendered log **message** as the payload and compresses it per line
 - The Java prototype reader rebuilds `LogRecord` instances using the decoded message
 - The Java prototype converter can transform `normal.log` plaintext input into a `.tog` file
-- The Rust viewer reads the same binary format directly and prints timestamps plus content
+- The Rust viewer reads the same binary format directly, resolves the header algorithm, and decompresses only the visible records
 - This prototype focuses on validating the binary framing first, before adding richer structured payloads and indexes
+
+Compression algorithm IDs:
+
+| ID | Algorithm |
+| --- | --- |
+| `0` | none |
+| `1` | gzip |
+| `2` | zip |
+| `3` | deflate |
+| `4` | bzip2 |
+| `5` | xz |
+| `6` | zstd |
+| `7` | snappy |
 
 ## Manual Prototype Testing / 手动测试命令
 
@@ -147,7 +161,7 @@ java -cp tinylog-core/target/classes com.huimang.tinylog.core.io.PlainTextLogToT
 Expected output:
 
 ```text
-converted normal.log to normal.tog
+converted normal.log to normal.tog using gzip
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer

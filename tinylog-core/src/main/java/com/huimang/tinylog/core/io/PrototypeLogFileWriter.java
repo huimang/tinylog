@@ -15,6 +15,7 @@ import java.util.Objects;
  */
 public final class PrototypeLogFileWriter implements LogWriter {
     private final Path path;
+    private final CompressionAlgorithm compressionAlgorithm;
     private final List<LogRecord> records;
     private boolean closed;
 
@@ -22,7 +23,15 @@ public final class PrototypeLogFileWriter implements LogWriter {
      * Creates a writer that rewrites the target file on each flush.
      */
     public PrototypeLogFileWriter(Path path) {
+        this(path, PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM);
+    }
+
+    /**
+     * Creates a writer that rewrites the target file on each flush with the selected compression.
+     */
+    public PrototypeLogFileWriter(Path path, CompressionAlgorithm compressionAlgorithm) {
         this.path = Objects.requireNonNull(path, "path");
+        this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
         this.records = new ArrayList<LogRecord>();
     }
 
@@ -36,10 +45,6 @@ public final class PrototypeLogFileWriter implements LogWriter {
                 throw new IllegalArgumentException("records must be appended in timestamp order");
             }
         }
-        byte[] content = PrototypeLogFileFormat.toContentBytes(record);
-        if (content.length > PrototypeLogFileFormat.MAX_CONTENT_LENGTH) {
-            throw new IllegalArgumentException("record content must fit in 3 bytes");
-        }
         records.add(record);
     }
 
@@ -52,6 +57,7 @@ public final class PrototypeLogFileWriter implements LogWriter {
         }
         try (DataOutputStream output = new DataOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(path)))) {
+            output.writeByte(compressionAlgorithm.getId());
             long startTimestampMillis = records.isEmpty() ? 0L : records.get(0).getTimestampMillis();
             output.writeLong(startTimestampMillis);
             output.writeLong(records.size());
@@ -60,7 +66,10 @@ public final class PrototypeLogFileWriter implements LogWriter {
                 if (offsetMillis < 0 || offsetMillis > PrototypeLogFileFormat.MAX_OFFSET_MILLIS) {
                     throw new IllegalArgumentException("record offset must fit in 4 bytes");
                 }
-                byte[] content = PrototypeLogFileFormat.toContentBytes(record);
+                byte[] content = PrototypeLogFileFormat.toContentBytes(record, compressionAlgorithm);
+                if (content.length > PrototypeLogFileFormat.MAX_CONTENT_LENGTH) {
+                    throw new IllegalArgumentException("compressed record content must fit in 3 bytes");
+                }
                 output.writeInt((int) offsetMillis);
                 PrototypeLogFileFormat.writeUnsignedMedium(output, content.length);
                 output.write(content);

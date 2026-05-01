@@ -6,3 +6,9 @@ description = "Rust CLI scaffold for browsing tinylog files"
 
 [dependencies]
 chrono = "0.4.38"
+bzip2 = "0.5.2"
+flate2 = "1.0.34"
+snap = "1.1.1"
+xz2 = "0.1.7"
+zstd = "0.13.2"
+zip = "2.4.2"

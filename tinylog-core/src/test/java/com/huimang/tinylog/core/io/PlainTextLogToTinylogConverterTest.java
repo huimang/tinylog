@@ -2,6 +2,7 @@ package com.huimang.tinylog.core.io;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.huimang.tinylog.core.model.LogRecord;
 import java.io.IOException;
@@ -44,6 +45,8 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals(toEpochMillis("2026-05-01 22:01:00,278"), records.get(1).getTimestampMillis());
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
+        byte[] header = Files.readAllBytes(tinylogPath);
+        assertEquals(CompressionAlgorithm.GZIP.getId(), header[0] & 0xFF);
     }
 
     @Test
@@ -75,6 +78,22 @@ public class PlainTextLogToTinylogConverterTest {
                 () -> new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath));
 
         assertEquals("invalid timestamp at " + normalLogPath + ":1", error.getMessage());
+    }
+
+    @Test
+    void shouldConvertWithSelectedCompressionAlgorithm() throws IOException {
+        Path normalLogPath = tempDir.resolve("normal.log");
+        Path tinylogPath = tempDir.resolve("normal.tog");
+        Files.write(
+                normalLogPath,
+                Collections.singletonList("2026-05-01 22:01:00,253 service started"),
+                StandardCharsets.UTF_8);
+
+        new PlainTextLogToTinylogConverter(CompressionAlgorithm.ZSTD).convert(normalLogPath, tinylogPath);
+
+        byte[] header = Files.readAllBytes(tinylogPath);
+        assertEquals(CompressionAlgorithm.ZSTD.getId(), header[0] & 0xFF);
+        assertTrue(header.length > PrototypeLogFileFormat.HEADER_BYTES);
     }
 
     /**

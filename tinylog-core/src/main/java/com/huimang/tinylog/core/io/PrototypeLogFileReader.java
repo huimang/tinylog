@@ -55,6 +55,7 @@ public final class PrototypeLogFileReader implements LogReader {
      */
     private static final class PrototypeLogIterator implements Iterator<LogRecord> {
         private final DataInputStream input;
+        private final CompressionAlgorithm compressionAlgorithm;
         private final LogQuery query;
         private final long startTimestampMillis;
         private long remainingEntries;
@@ -69,6 +70,7 @@ public final class PrototypeLogFileReader implements LogReader {
             this.input = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)));
             this.query = query;
             try {
+                this.compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedByte());
                 this.startTimestampMillis = input.readLong();
                 this.remainingEntries = input.readLong();
                 if (remainingEntries < 0L) {
@@ -115,7 +117,9 @@ public final class PrototypeLogFileReader implements LogReader {
                     LogRecord record = PrototypeLogFileFormat.toRecord(
                             startTimestampMillis,
                             offsetMillis,
-                            new String(contentBytes, PrototypeLogFileFormat.CONTENT_CHARSET));
+                            new String(
+                                    compressionAlgorithm.decompress(contentBytes),
+                                    PrototypeLogFileFormat.CONTENT_CHARSET));
                     if (matches(record)) {
                         nextRecord = record;
                         return;

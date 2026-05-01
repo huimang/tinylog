@@ -22,7 +22,7 @@ public class PrototypeLogFileReaderWriterTest {
     @Test
     void shouldRoundTripPrototypeFile() throws IOException {
         Path path = tempDir.resolve("sample.tog");
-        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path)) {
+        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path, CompressionAlgorithm.GZIP)) {
             writer.append(new LogRecord(1_700_000_000_000L, LogLevel.INFO, "app", "main", "alpha", null));
             writer.append(new LogRecord(1_700_000_000_125L, LogLevel.ERROR, "app", "main", "beta", null));
         }
@@ -43,7 +43,7 @@ public class PrototypeLogFileReaderWriterTest {
     @Test
     void shouldFilterPrototypeRecordsByQuery() throws IOException {
         Path path = tempDir.resolve("query.tog");
-        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path)) {
+        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path, CompressionAlgorithm.GZIP)) {
             writer.append(new LogRecord(10_000L, LogLevel.INFO, "app", "main", "alpha", null));
             writer.append(new LogRecord(10_030L, LogLevel.INFO, "app", "main", "beta", null));
             writer.append(new LogRecord(10_050L, LogLevel.INFO, "app", "main", "beta-gamma", null));
@@ -64,6 +64,26 @@ public class PrototypeLogFileReaderWriterTest {
         assertEquals(2, records.size());
         assertTrue(records.get(0).getMessage().contains("beta"));
         assertTrue(records.get(1).getMessage().contains("beta"));
+    }
+
+    @Test
+    void shouldRoundTripAcrossAllSupportedCompressionAlgorithms() throws IOException {
+        for (CompressionAlgorithm algorithm : CompressionAlgorithm.values()) {
+            Path path = tempDir.resolve("roundtrip-" + algorithm.getDisplayName() + ".tog");
+            try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path, algorithm)) {
+                writer.append(new LogRecord(20_000L, LogLevel.INFO, "app", "main", "alpha-beta-gamma", null));
+                writer.append(new LogRecord(20_040L, LogLevel.INFO, "app", "main", "delta-epsilon-zeta", null));
+            }
+
+            List<LogRecord> records;
+            try (PrototypeLogFileReader reader = new PrototypeLogFileReader(path)) {
+                records = collect(reader.scan());
+            }
+
+            assertEquals(2, records.size(), "record count should round-trip for " + algorithm.getDisplayName());
+            assertEquals("alpha-beta-gamma", records.get(0).getMessage());
+            assertEquals("delta-epsilon-zeta", records.get(1).getMessage());
+        }
     }
 
     /**

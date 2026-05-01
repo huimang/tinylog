@@ -23,6 +23,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
         <slf4j.version>2.0.17</slf4j.version>
+        <commons.compress.version>1.27.1</commons.compress.version>
+        <xz.version>1.10</xz.version>
+        <zstd.version>1.5.7-4</zstd.version>
     </properties>
 
     <dependencyManagement>

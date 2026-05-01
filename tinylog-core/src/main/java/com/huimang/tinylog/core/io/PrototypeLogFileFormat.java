@@ -19,9 +19,14 @@ final class PrototypeLogFileFormat {
     static final String FILE_EXTENSION = ".tog";
 
     /**
-     * Stores the fixed-size header bytes: start timestamp plus record count.
+     * Defines the default compression algorithm used by the prototype writer and converter.
      */
-    static final int HEADER_BYTES = 16;
+    static final CompressionAlgorithm DEFAULT_COMPRESSION_ALGORITHM = CompressionAlgorithm.GZIP;
+
+    /**
+     * Stores the fixed-size header bytes: compression algorithm plus start timestamp plus record count.
+     */
+    static final int HEADER_BYTES = 17;
 
     /**
      * Stores the fixed-size metadata bytes for one record: offset plus content length.
@@ -49,8 +54,8 @@ final class PrototypeLogFileFormat {
     /**
      * Converts the current record payload to the prototype UTF-8 content field.
      */
-    static byte[] toContentBytes(LogRecord record) {
-        return record.getMessage().getBytes(CONTENT_CHARSET);
+    static byte[] toContentBytes(LogRecord record, CompressionAlgorithm compressionAlgorithm) throws IOException {
+        return compressionAlgorithm.compress(record.getMessage().getBytes(CONTENT_CHARSET));
     }
 
     /**

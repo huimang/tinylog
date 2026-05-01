@@ -15,13 +15,17 @@ public final class PlainTextLogToTinylogCli {
      * Converts one plaintext log file into one prototype tinylog file.
      */
     public static void main(String[] args) throws IOException {
-        if (args.length != 2) {
+        if (args.length != 2 && args.length != 3) {
             throw new IllegalArgumentException(
-                    "usage: PlainTextLogToTinylogCli <input.log> <output.tog>");
+                    "usage: PlainTextLogToTinylogCli <input.log> <output.tog> [algorithmId]");
         }
         Path inputPath = Paths.get(args[0]);
         Path outputPath = Paths.get(args[1]);
-        new PlainTextLogToTinylogConverter().convert(inputPath, outputPath);
-        System.out.println("converted " + inputPath + " to " + outputPath);
+        CompressionAlgorithm compressionAlgorithm = args.length == 3
+                ? CompressionAlgorithm.fromId(Integer.parseInt(args[2]))
+                : PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM;
+        new PlainTextLogToTinylogConverter(compressionAlgorithm).convert(inputPath, outputPath);
+        System.out.println("converted " + inputPath + " to " + outputPath
+                + " using " + compressionAlgorithm.getDisplayName());
     }
 }
