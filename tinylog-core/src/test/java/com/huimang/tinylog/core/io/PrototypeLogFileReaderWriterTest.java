@@ -1,11 +1,11 @@
-package com.huimang.tinylong.core.io;
+package com.huimang.tinylog.core.io;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.huimang.tinylong.core.model.LogLevel;
-import com.huimang.tinylong.core.model.LogQuery;
-import com.huimang.tinylong.core.model.LogRecord;
+import com.huimang.tinylog.core.model.LogLevel;
+import com.huimang.tinylog.core.model.LogQuery;
+import com.huimang.tinylog.core.model.LogRecord;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;

@@ -1,4 +1,4 @@
-package com.huimang.tinylong.core.model;
+package com.huimang.tinylog.core.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -14,4 +14,3 @@ public class LogRecordTest {
         assertTrue(record.getAttributes().isEmpty());
     }
 }
-

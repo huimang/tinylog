@@ -1,6 +1,6 @@
-package com.huimang.tinylong.core.codec;
+package com.huimang.tinylog.core.codec;
 
-import com.huimang.tinylong.core.model.LogRecord;
+import com.huimang.tinylog.core.model.LogRecord;
 import java.io.IOException;
 
 /**

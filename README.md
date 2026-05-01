@@ -22,7 +22,7 @@ The project is initialized around two product surfaces:
 | Module | Responsibility |
 | --- | --- |
 | `tinylog-core` | Core log domain model, codec abstractions, and reader/writer contracts |
-| `tinylog-sdk` | Business-facing Java logging API and logger factory abstractions |
+| `tinylog-sdk` | Business-facing Java logging API, logger factories, and SLF4J 2.0.17 bridge support |
 | `tinylog-viewer` | Rust CLI scaffold for browsing proprietary tinylog files |
 
 ## Engineering Guidelines / 工程准则
@@ -83,8 +83,9 @@ Recommended workflow:
 
 ## Current Technical Direction / 当前技术方向
 
-- **Java namespace**: `com.huimang.tinylong`
+- **Java namespace**: `com.huimang.tinylog`
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
+- **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration
 - **Rust viewer**: standalone Cargo project under `tinylog-viewer`
 
 ## Prototype File Format / 当前原型格式

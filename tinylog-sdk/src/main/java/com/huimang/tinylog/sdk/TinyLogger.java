@@ -1,4 +1,4 @@
-package com.huimang.tinylong.sdk;
+package com.huimang.tinylog.sdk;
 
 /**
  * Defines the business-facing logging contract used by Java applications.

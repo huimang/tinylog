@@ -1,4 +1,4 @@
-package com.huimang.tinylong.core.model;
+package com.huimang.tinylog.core.model;
 
 /**
  * Represents the business severity of a log record.

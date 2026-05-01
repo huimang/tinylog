@@ -1,4 +1,4 @@
-package com.huimang.tinylong.sdk;
+package com.huimang.tinylog.sdk;
 
 /**
  * Resolves business-facing loggers without exposing backend details.

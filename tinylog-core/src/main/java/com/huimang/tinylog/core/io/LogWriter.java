@@ -1,6 +1,6 @@
-package com.huimang.tinylong.core.io;
+package com.huimang.tinylog.core.io;
 
-import com.huimang.tinylong.core.model.LogRecord;
+import com.huimang.tinylog.core.model.LogRecord;
 import java.io.Closeable;
 import java.io.IOException;
 

@@ -1,7 +1,7 @@
-package com.huimang.tinylong.core.io;
+package com.huimang.tinylog.core.io;
 
-import com.huimang.tinylong.core.model.LogQuery;
-import com.huimang.tinylong.core.model.LogRecord;
+import com.huimang.tinylog.core.model.LogQuery;
+import com.huimang.tinylog.core.model.LogRecord;
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;

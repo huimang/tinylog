@@ -1,4 +1,4 @@
-package com.huimang.tinylong.core.model;
+package com.huimang.tinylog.core.model;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;

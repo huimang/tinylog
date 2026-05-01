@@ -1,4 +1,4 @@
-package com.huimang.tinylong.sdk;
+package com.huimang.tinylog.sdk;
 
 /**
  * Creates no-op loggers as a placeholder until a real backend is wired in.

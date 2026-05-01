@@ -1,4 +1,4 @@
-package com.huimang.tinylong.sdk;
+package com.huimang.tinylog.sdk;
 
 import java.util.Objects;
 

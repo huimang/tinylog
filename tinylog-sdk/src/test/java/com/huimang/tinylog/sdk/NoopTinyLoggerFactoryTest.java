@@ -1,4 +1,4 @@
-package com.huimang.tinylong.sdk;
+package com.huimang.tinylog.sdk;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -12,4 +12,3 @@ public class NoopTinyLoggerFactoryTest {
         assertEquals(NoopTinyLoggerFactoryTest.class.getName(), logger.getName());
     }
 }
-

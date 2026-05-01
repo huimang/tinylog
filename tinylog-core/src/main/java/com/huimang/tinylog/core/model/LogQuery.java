@@ -1,4 +1,4 @@
-package com.huimang.tinylong.core.model;
+package com.huimang.tinylog.core.model;
 
 /**
  * Describes a business-oriented filter for browsing or searching log data.
