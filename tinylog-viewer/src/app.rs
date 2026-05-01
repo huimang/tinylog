@@ -25,23 +25,23 @@ impl ViewerApplication {
     pub fn run(&self) -> Result<String, String> {
         match self.config.log_file.as_deref() {
             Some(path) => {
-                let entries = format::read_file(path)?;
+                let window = format::read_visible_window(path, self.config.page_size)?;
                 let mut lines = Vec::new();
                 lines.push(format!(
                     "tinylog viewer opened {path} with {} records.",
-                    entries.len()
+                    window.total_records
                 ));
-                for entry in entries.iter().take(self.config.page_size) {
+                for entry in &window.visible_entries {
                     lines.push(format!(
                         "{} {}",
                         format::format_timestamp_millis(entry.timestamp_millis)?,
                         entry.content
                     ));
                 }
-                if entries.len() > self.config.page_size {
+                if usize::try_from(window.total_records).unwrap_or(usize::MAX) > window.visible_entries.len() {
                     lines.push(format!(
                         "... {} more records omitted",
-                        entries.len() - self.config.page_size
+                        usize::try_from(window.total_records).unwrap_or(usize::MAX) - window.visible_entries.len()
                     ));
                 }
                 Ok(lines.join("\n"))

@@ -1,5 +1,13 @@
 use chrono::{Local, TimeZone};
 use std::fs;
+use std::io::{BufReader, Read};
+
+/// Holds the total record count together with the currently visible entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibleLogWindow {
+    pub total_records: u64,
+    pub visible_entries: Vec<ParsedLogEntry>,
+}
 
 /// Represents one rendered log entry parsed from the prototype binary format.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,9 +18,44 @@ pub struct ParsedLogEntry {
 }
 
 /// Reads and parses one prototype tinylog file from disk.
+#[allow(dead_code)]
 pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
     let bytes = fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     parse_bytes(&bytes)
+}
+
+/// Reads only the currently visible window from one prototype tinylog file.
+pub fn read_visible_window(path: &str, visible_count: usize) -> Result<VisibleLogWindow, String> {
+    let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let start_timestamp_millis = read_u64_from_reader(&mut reader)?;
+    let total_records = read_u64_from_reader(&mut reader)?;
+    let visible_count = usize::min(
+        visible_count,
+        usize::try_from(total_records).unwrap_or(usize::MAX),
+    );
+    let mut visible_entries = Vec::with_capacity(visible_count);
+
+    for _ in 0..visible_count {
+        let offset_millis = read_u32_from_reader(&mut reader)?;
+        let content_length = read_u24_from_reader(&mut reader)? as usize;
+        let mut content_bytes = vec![0_u8; content_length];
+        reader
+            .read_exact(&mut content_bytes)
+            .map_err(|_| "prototype log file is truncated".to_string())?;
+        let content = String::from_utf8(content_bytes)
+            .map_err(|error| format!("invalid utf-8 log content: {error}"))?;
+        visible_entries.push(ParsedLogEntry {
+            timestamp_millis: start_timestamp_millis + u64::from(offset_millis),
+            offset_millis,
+            content,
+        });
+    }
+
+    Ok(VisibleLogWindow {
+        total_records,
+        visible_entries,
+    })
 }
 
 /// Formats epoch milliseconds as a human-readable local timestamp.
@@ -27,6 +70,7 @@ pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> 
 }
 
 /// Parses bytes using the current prototype layout.
+#[allow(dead_code)]
 pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
     let mut cursor = Cursor::new(bytes);
     let start_timestamp_millis = cursor.read_u64()?;
@@ -53,7 +97,35 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
     Ok(entries)
 }
 
+/// Reads one big-endian 64-bit integer from a stream.
+fn read_u64_from_reader(reader: &mut impl Read) -> Result<u64, String> {
+    let mut bytes = [0_u8; 8];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+/// Reads one big-endian 32-bit integer from a stream.
+fn read_u32_from_reader(reader: &mut impl Read) -> Result<u32, String> {
+    let mut bytes = [0_u8; 4];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    Ok(u32::from_be_bytes(bytes))
+}
+
+/// Reads one big-endian 24-bit integer from a stream.
+fn read_u24_from_reader(reader: &mut impl Read) -> Result<u32, String> {
+    let mut bytes = [0_u8; 3];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    Ok((u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]))
+}
+
 /// Supports deterministic byte parsing without introducing extra dependencies.
+#[allow(dead_code)]
 struct Cursor<'a> {
     bytes: &'a [u8],
     offset: usize,
@@ -103,7 +175,10 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_timestamp_millis, parse_bytes};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::{format_timestamp_millis, parse_bytes, read_visible_window};
 
     /**
      * Builds one valid two-record prototype buffer for parser tests.
@@ -150,5 +225,34 @@ mod tests {
         assert_eq!(&value[13..14], ":");
         assert_eq!(&value[16..17], ":");
         assert_eq!(&value[19..20], ",");
+    }
+
+    #[test]
+    fn read_visible_window_only_decodes_requested_records() {
+        let path = std::env::temp_dir().join(format!(
+            "tinylog-visible-window-{}.tog",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            vec![
+                0, 0, 1, 139, 207, 229, 104, 0,
+                0, 0, 0, 0, 0, 0, 0, 2,
+                0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
+                0, 0, 0, 25, 0, 0, 20, b'b', b'e',
+            ],
+        )
+        .expect("write prototype file");
+
+        let window = read_visible_window(&path.to_string_lossy(), 1).expect("read visible window");
+
+        assert_eq!(window.total_records, 2);
+        assert_eq!(window.visible_entries.len(), 1);
+        assert_eq!(window.visible_entries[0].content, "alpha");
+
+        fs::remove_file(path).expect("cleanup file");
     }
 }

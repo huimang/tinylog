@@ -165,6 +165,8 @@ tinylog viewer opened normal.tog with 3 records.
 2026-05-01 22:01:00,353 order created
 ```
 
+The viewer only reads and decodes the currently visible page of records. Records outside the visible window are left untouched until they are needed.
+
 ### 4. Re-run the automated converter test only
 
 ```bash
