@@ -92,7 +92,7 @@ Recommended workflow:
 
 The current prototype uses a compact binary layout in **big-endian** order:
 
-1. **Compression algorithm**: 1 byte
+1. **Compression algorithm**: 2 bytes
 2. **Start timestamp**: 8 bytes, milliseconds since epoch
 3. **Record count**: 8 bytes
 4. **File extension**: `.tog`
@@ -104,7 +104,7 @@ The current prototype uses a compact binary layout in **big-endian** order:
 In other words:
 
 ```text
-[compression:1][startTimestamp:8][recordCount:8]
+[compression:2][startTimestamp:8][recordCount:8]
 [offset:4][compressedLength:3][compressedContent:N]
 [offset:4][compressedLength:3][compressedContent:N]
 ...

@@ -46,7 +46,7 @@ pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
 pub fn read_visible_window(path: &str, visible_count: usize) -> Result<VisibleLogWindow, String> {
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
-    let compression_algorithm = CompressionAlgorithm::from_id(read_u8_from_reader(&mut reader)?)?;
+    let compression_algorithm = CompressionAlgorithm::from_id(read_u16_from_reader(&mut reader)?)?;
     let start_timestamp_millis = read_u64_from_reader(&mut reader)?;
     let total_records = read_u64_from_reader(&mut reader)?;
     let visible_count = usize::min(
@@ -92,7 +92,7 @@ pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> 
 #[allow(dead_code)]
 pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
     let mut cursor = CursorReader::new(bytes);
-    let compression_algorithm = CompressionAlgorithm::from_id(cursor.read_u8()?)?;
+    let compression_algorithm = CompressionAlgorithm::from_id(cursor.read_u16()?)?;
     let start_timestamp_millis = cursor.read_u64()?;
     let record_count = cursor.read_u64()?;
     let mut entries = Vec::new();
@@ -119,7 +119,7 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
 
 impl CompressionAlgorithm {
     /// Resolves one persisted algorithm identifier.
-    fn from_id(id: u8) -> Result<Self, String> {
+    fn from_id(id: u16) -> Result<Self, String> {
         match id {
             0 => Ok(Self::None),
             1 => Ok(Self::Gzip),
@@ -162,13 +162,13 @@ impl CompressionAlgorithm {
     }
 }
 
-/// Reads one byte from a stream.
-fn read_u8_from_reader(reader: &mut impl Read) -> Result<u8, String> {
-    let mut bytes = [0_u8; 1];
+/// Reads one big-endian 16-bit integer from a stream.
+fn read_u16_from_reader(reader: &mut impl Read) -> Result<u16, String> {
+    let mut bytes = [0_u8; 2];
     reader
         .read_exact(&mut bytes)
         .map_err(|_| "prototype log file is truncated".to_string())?;
-    Ok(bytes[0])
+    Ok(u16::from_be_bytes(bytes))
 }
 
 /// Reads one big-endian 64-bit integer from a stream.
@@ -225,9 +225,10 @@ impl<'a> CursorReader<'a> {
         self.bytes.len().saturating_sub(self.offset)
     }
 
-    /// Reads one byte.
-    fn read_u8(&mut self) -> Result<u8, String> {
-        Ok(self.read_exact(1)?[0])
+    /// Reads one big-endian 16-bit integer.
+    fn read_u16(&mut self) -> Result<u16, String> {
+        let bytes = self.read_exact(2)?;
+        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
     }
 
     /// Reads one big-endian 64-bit integer.
@@ -276,7 +277,7 @@ mod tests {
      */
     fn sample_bytes() -> Vec<u8> {
         vec![
-            0,
+            0, 0,
             0, 0, 1, 139, 207, 229, 104, 0,
             0, 0, 0, 0, 0, 0, 0, 2,
             0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -331,7 +332,7 @@ mod tests {
         fs::write(
             &path,
             vec![
-                0,
+                0, 0,
                 0, 0, 1, 139, 207, 229, 104, 0,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -364,7 +365,7 @@ mod tests {
             encoder.write_all(b"alpha").expect("write gzip payload");
             encoder.finish().expect("finish gzip payload");
         }
-        let mut bytes = vec![1];
+        let mut bytes = vec![0, 1];
         bytes.extend_from_slice(&[0, 0, 1, 139, 207, 229, 104, 0]);
         bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
         bytes.extend_from_slice(&[0, 0, 0, 0]);

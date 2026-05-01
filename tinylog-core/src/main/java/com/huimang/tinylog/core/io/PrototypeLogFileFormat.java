@@ -24,9 +24,9 @@ final class PrototypeLogFileFormat {
     static final CompressionAlgorithm DEFAULT_COMPRESSION_ALGORITHM = CompressionAlgorithm.GZIP;
 
     /**
-     * Stores the fixed-size header bytes: compression algorithm plus start timestamp plus record count.
+     * Stores the fixed-size header bytes: two-byte compression algorithm plus start timestamp plus record count.
      */
-    static final int HEADER_BYTES = 17;
+    static final int HEADER_BYTES = 18;
 
     /**
      * Stores the fixed-size metadata bytes for one record: offset plus content length.

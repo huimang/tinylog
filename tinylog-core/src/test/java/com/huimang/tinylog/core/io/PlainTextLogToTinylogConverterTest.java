@@ -46,7 +46,7 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
         byte[] header = Files.readAllBytes(tinylogPath);
-        assertEquals(CompressionAlgorithm.GZIP.getId(), header[0] & 0xFF);
+        assertEquals(CompressionAlgorithm.GZIP.getId(), readAlgorithmId(header));
     }
 
     @Test
@@ -92,7 +92,7 @@ public class PlainTextLogToTinylogConverterTest {
         new PlainTextLogToTinylogConverter(CompressionAlgorithm.ZSTD).convert(normalLogPath, tinylogPath);
 
         byte[] header = Files.readAllBytes(tinylogPath);
-        assertEquals(CompressionAlgorithm.ZSTD.getId(), header[0] & 0xFF);
+        assertEquals(CompressionAlgorithm.ZSTD.getId(), readAlgorithmId(header));
         assertTrue(header.length > PrototypeLogFileFormat.HEADER_BYTES);
     }
 
@@ -115,6 +115,13 @@ public class PlainTextLogToTinylogConverterTest {
                 .atZone(ZoneId.systemDefault())
                 .toInstant()
                 .toEpochMilli();
+    }
+
+    /**
+     * Reads the two-byte big-endian compression algorithm field from a prototype file header.
+     */
+    private static int readAlgorithmId(byte[] header) {
+        return ((header[0] & 0xFF) << 8) | (header[1] & 0xFF);
     }
 
     /**

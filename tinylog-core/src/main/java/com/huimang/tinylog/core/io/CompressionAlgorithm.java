@@ -223,7 +223,7 @@ public enum CompressionAlgorithm {
     };
 
     /**
-     * Stores the one-byte identifier persisted in the file header.
+     * Stores the persisted algorithm identifier used inside the two-byte header field.
      */
     private final int id;
 
@@ -238,7 +238,7 @@ public enum CompressionAlgorithm {
     }
 
     /**
-     * Returns the one-byte identifier persisted in the file header.
+     * Returns the persisted algorithm identifier used inside the two-byte header field.
      */
     public int getId() {
         return id;

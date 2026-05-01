@@ -70,7 +70,7 @@ public final class PrototypeLogFileReader implements LogReader {
             this.input = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)));
             this.query = query;
             try {
-                this.compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedByte());
+                this.compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedShort());
                 this.startTimestampMillis = input.readLong();
                 this.remainingEntries = input.readLong();
                 if (remainingEntries < 0L) {

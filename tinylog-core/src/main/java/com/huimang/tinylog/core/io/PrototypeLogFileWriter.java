@@ -57,7 +57,7 @@ public final class PrototypeLogFileWriter implements LogWriter {
         }
         try (DataOutputStream output = new DataOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(path)))) {
-            output.writeByte(compressionAlgorithm.getId());
+            output.writeShort(compressionAlgorithm.getId());
             long startTimestampMillis = records.isEmpty() ? 0L : records.get(0).getTimestampMillis();
             output.writeLong(startTimestampMillis);
             output.writeLong(records.size());
