@@ -117,6 +117,58 @@ Current prototype notes:
 - The Rust viewer reads the same binary format directly and prints timestamps plus content
 - This prototype focuses on validating the binary framing first, before adding richer structured payloads and indexes
 
+## Manual Prototype Testing / 手动测试命令
+
+The current prototype accepts plaintext log lines in this format:
+
+```text
+<epochMillis> <message>
+```
+
+### 1. Create a sample `normal.log`
+
+```bash
+cat > normal.log <<'EOF'
+1700000000000 service started
+1700000000025 user signed in
+1700000000100 order created
+EOF
+```
+
+### 2. Convert `normal.log` to `normal.tog`
+
+```bash
+mvn -q -pl tinylog-core -am compile
+java -cp tinylog-core/target/classes com.huimang.tinylog.core.io.PlainTextLogToTinylogCli normal.log normal.tog
+```
+
+Expected output:
+
+```text
+converted normal.log to normal.tog
+```
+
+### 3. Read `normal.tog` with the Rust viewer
+
+```bash
+cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- normal.tog
+```
+
+Expected output shape:
+
+```text
+tinylog viewer opened normal.tog with 3 records.
+1700000000000 | +0ms | service started
+1700000000025 | +25ms | user signed in
+1700000000100 | +100ms | order created
+```
+
+### 4. Re-run the automated converter test only
+
+```bash
+mvn -q -pl tinylog-core -Dtest=PlainTextLogToTinylogConverterTest test
+```
+
 ## Near-Term Roadmap / 下一阶段建议
 
 1. Define the tinylog file header, block layout, and index structure
