@@ -46,7 +46,7 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
         byte[] header = Files.readAllBytes(tinylogPath);
-        assertEquals(CompressionAlgorithm.GZIP.getId(), readAlgorithmId(header));
+        assertEquals(CompressionAlgorithm.ZSTD.getId(), readAlgorithmId(header));
     }
 
     @Test

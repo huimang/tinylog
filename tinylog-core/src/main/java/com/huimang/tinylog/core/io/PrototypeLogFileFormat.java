@@ -23,7 +23,7 @@ final class PrototypeLogFileFormat {
     /**
      * Defines the default compression algorithm used by the prototype writer and converter.
      */
-    static final CompressionAlgorithm DEFAULT_COMPRESSION_ALGORITHM = CompressionAlgorithm.GZIP;
+    static final CompressionAlgorithm DEFAULT_COMPRESSION_ALGORITHM = CompressionAlgorithm.ZSTD;
 
     /**
      * Stores the fixed-size header bytes: two-byte compression algorithm plus two-byte time-zone offset plus

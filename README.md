@@ -162,7 +162,7 @@ java -cp tinylog-core/target/classes com.huimang.tinylog.core.io.PlainTextLogToT
 Expected output:
 
 ```text
-converted normal.log to normal.tog using gzip
+converted normal.log to normal.tog using zstd
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer
