@@ -1,0 +1,8 @@
+[package]
+name = "tinylog-viewer"
+version = "0.1.0"
+edition = "2021"
+description = "Rust CLI scaffold for browsing tinylog files"
+
+[dependencies]
+
