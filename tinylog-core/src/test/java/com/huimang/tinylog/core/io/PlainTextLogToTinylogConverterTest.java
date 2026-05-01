@@ -108,7 +108,7 @@ public class PlainTextLogToTinylogConverterTest {
     }
 
     /**
-     * Converts one local timestamp string to epoch milliseconds using the host zone.
+     * Converts one plaintext timestamp string to epoch milliseconds using the host zone.
      */
     private static long toEpochMillis(String value) {
         return LocalDateTime.parse(value, DateTimeFormatterHolder.TIMESTAMP_FORMATTER)

@@ -93,9 +93,10 @@ Recommended workflow:
 The current prototype uses a compact binary layout in **big-endian** order:
 
 1. **Compression algorithm**: 2 bytes
-2. **Start timestamp**: 8 bytes, milliseconds since epoch
-3. **Record count**: 8 bytes
-4. **File extension**: `.tog`
+2. **Header time-zone offset**: 2 bytes, signed minutes
+3. **Start timestamp**: 8 bytes, milliseconds since epoch
+4. **Record count**: 8 bytes
+5. **File extension**: `.tog`
 5. Repeated for each record:
    - **Millisecond offset** from the start timestamp: 4 bytes
    - **Compressed content length**: 3 bytes
@@ -104,7 +105,7 @@ The current prototype uses a compact binary layout in **big-endian** order:
 In other words:
 
 ```text
-[compression:2][startTimestamp:8][recordCount:8]
+[compression:2][zoneOffsetMinutes:2][startTimestamp:8][recordCount:8]
 [offset:4][compressedLength:3][compressedContent:N]
 [offset:4][compressedLength:3][compressedContent:N]
 ...
@@ -139,7 +140,7 @@ The current prototype accepts plaintext log lines in this format:
 <yyyy-MM-dd HH:mm:ss,SSS> <message>
 ```
 
-The converter interprets that local timestamp using the **system default time zone** of the machine running the conversion.
+The converter interprets that local timestamp using the **system default time zone** of the machine running the conversion, and stores that fixed offset in the file header. The viewer always renders the file using the header offset, so the displayed date text stays stable across machines and time zones.
 
 ### 1. Create a sample `normal.log`
 

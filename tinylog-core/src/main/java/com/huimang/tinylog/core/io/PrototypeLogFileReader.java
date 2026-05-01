@@ -57,6 +57,7 @@ public final class PrototypeLogFileReader implements LogReader {
         private final DataInputStream input;
         private final CompressionAlgorithm compressionAlgorithm;
         private final LogQuery query;
+        private final short headerTimeZoneOffsetMinutes;
         private final long startTimestampMillis;
         private long remainingEntries;
         private LogRecord nextRecord;
@@ -71,6 +72,8 @@ public final class PrototypeLogFileReader implements LogReader {
             this.query = query;
             try {
                 this.compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedShort());
+                this.headerTimeZoneOffsetMinutes =
+                        PrototypeLogFileFormat.validateHeaderTimeZoneOffsetMinutes(input.readShort());
                 this.startTimestampMillis = input.readLong();
                 this.remainingEntries = input.readLong();
                 if (remainingEntries < 0L) {

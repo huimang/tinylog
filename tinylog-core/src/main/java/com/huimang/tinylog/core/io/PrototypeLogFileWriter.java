@@ -59,6 +59,10 @@ public final class PrototypeLogFileWriter implements LogWriter {
                 new BufferedOutputStream(Files.newOutputStream(path)))) {
             output.writeShort(compressionAlgorithm.getId());
             long startTimestampMillis = records.isEmpty() ? 0L : records.get(0).getTimestampMillis();
+            short headerTimeZoneOffsetMinutes = records.isEmpty()
+                    ? 0
+                    : PrototypeLogFileFormat.resolveHeaderTimeZoneOffsetMinutes(startTimestampMillis);
+            output.writeShort(headerTimeZoneOffsetMinutes);
             output.writeLong(startTimestampMillis);
             output.writeLong(records.size());
             for (LogRecord record : records) {

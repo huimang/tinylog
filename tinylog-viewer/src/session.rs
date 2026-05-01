@@ -64,7 +64,7 @@ impl InteractiveViewerSession {
         for entry in window.visible_entries {
             lines.push(format!(
                 "{} {}",
-                format::format_timestamp_millis(entry.timestamp_millis)?,
+                format::format_timestamp_millis(entry.timestamp_millis, window.zone_offset_minutes)?,
                 entry.content
             ));
         }
@@ -148,7 +148,7 @@ mod tests {
     /// Builds one valid three-record prototype file for session tests.
     fn sample_bytes() -> Vec<u8> {
         vec![
-            0, 0,
+            0, 0, 0, 0,
             0, 0, 1, 139, 207, 229, 104, 0,
             0, 0, 0, 0, 0, 0, 0, 3,
             0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',

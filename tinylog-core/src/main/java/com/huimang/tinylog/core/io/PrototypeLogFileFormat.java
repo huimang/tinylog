@@ -7,6 +7,8 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Collections;
 
 /**
@@ -24,9 +26,10 @@ final class PrototypeLogFileFormat {
     static final CompressionAlgorithm DEFAULT_COMPRESSION_ALGORITHM = CompressionAlgorithm.GZIP;
 
     /**
-     * Stores the fixed-size header bytes: two-byte compression algorithm plus start timestamp plus record count.
+     * Stores the fixed-size header bytes: two-byte compression algorithm plus two-byte time-zone offset plus
+     * start timestamp plus record count.
      */
-    static final int HEADER_BYTES = 18;
+    static final int HEADER_BYTES = 20;
 
     /**
      * Stores the fixed-size metadata bytes for one record: offset plus content length.
@@ -42,6 +45,16 @@ final class PrototypeLogFileFormat {
      * Limits one record payload to the 3-byte unsigned length range.
      */
     static final int MAX_CONTENT_LENGTH = 0xFF_FFFF;
+
+    /**
+     * Limits one file-level time-zone offset to the signed 16-bit minute range.
+     */
+    static final int MIN_TIME_ZONE_OFFSET_MINUTES = -18 * 60;
+
+    /**
+     * Limits one file-level time-zone offset to the signed 16-bit minute range.
+     */
+    static final int MAX_TIME_ZONE_OFFSET_MINUTES = 18 * 60;
 
     /**
      * Defines the UTF-8 encoding used for the prototype content bytes.
@@ -69,6 +82,28 @@ final class PrototypeLogFileFormat {
                 "prototype",
                 content,
                 Collections.singletonMap("format", "prototype"));
+    }
+
+    /**
+     * Resolves the fixed header time-zone offset minutes for one file based on the first record timestamp.
+     */
+    static short resolveHeaderTimeZoneOffsetMinutes(long timestampMillis) {
+        int offsetMinutes = ZoneId.systemDefault()
+                .getRules()
+                .getOffset(Instant.ofEpochMilli(timestampMillis))
+                .getTotalSeconds() / 60;
+        validateHeaderTimeZoneOffsetMinutes(offsetMinutes);
+        return (short) offsetMinutes;
+    }
+
+    /**
+     * Validates one file-level time-zone offset minute value.
+     */
+    static short validateHeaderTimeZoneOffsetMinutes(int offsetMinutes) {
+        if (offsetMinutes < MIN_TIME_ZONE_OFFSET_MINUTES || offsetMinutes > MAX_TIME_ZONE_OFFSET_MINUTES) {
+            throw new IllegalArgumentException("time-zone offset must fit in signed 16-bit minute range");
+        }
+        return (short) offsetMinutes;
     }
 
     /**

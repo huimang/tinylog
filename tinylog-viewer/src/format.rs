@@ -1,5 +1,5 @@
 use bzip2::read::BzDecoder;
-use chrono::{Local, TimeZone};
+use chrono::{FixedOffset, TimeZone};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use snap::read::FrameDecoder;
 use std::fs;
@@ -11,6 +11,7 @@ use zip::ZipArchive;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleLogWindow {
     pub total_records: u64,
+    pub zone_offset_minutes: i16,
     pub visible_entries: Vec<ParsedLogEntry>,
 }
 
@@ -47,6 +48,8 @@ pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize)
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
     let compression_algorithm = CompressionAlgorithm::from_id(read_u16_from_reader(&mut reader)?)?;
+    let zone_offset_minutes = read_i16_from_reader(&mut reader)?;
+    validate_zone_offset_minutes(zone_offset_minutes)?;
     let start_timestamp_millis = read_u64_from_reader(&mut reader)?;
     let total_records = read_u64_from_reader(&mut reader)?;
     let total_records_usize = usize::try_from(total_records).unwrap_or(usize::MAX);
@@ -81,18 +84,22 @@ pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize)
 
     Ok(VisibleLogWindow {
         total_records,
+        zone_offset_minutes,
         visible_entries,
     })
 }
 
-/// Formats epoch milliseconds as a human-readable local timestamp.
-pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> {
+/// Formats persisted milliseconds as a human-readable timestamp in the header time zone.
+pub fn format_timestamp_millis(timestamp_millis: u64, zone_offset_minutes: i16) -> Result<String, String> {
     let timestamp_millis =
         i64::try_from(timestamp_millis).map_err(|_| "timestamp exceeds supported range".to_string())?;
-    let date_time = Local
+    let offset_seconds = i32::from(validate_zone_offset_minutes(zone_offset_minutes)?) * 60;
+    let fixed_offset = FixedOffset::east_opt(offset_seconds)
+        .ok_or_else(|| "time-zone offset cannot be represented".to_string())?;
+    let date_time = fixed_offset
         .timestamp_millis_opt(timestamp_millis)
         .single()
-        .ok_or_else(|| "timestamp cannot be represented in the local time zone".to_string())?;
+        .ok_or_else(|| "timestamp cannot be represented in the header time zone".to_string())?;
     Ok(date_time.format("%Y-%m-%d %H:%M:%S,%3f").to_string())
 }
 
@@ -101,6 +108,7 @@ pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> 
 pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
     let mut cursor = CursorReader::new(bytes);
     let compression_algorithm = CompressionAlgorithm::from_id(cursor.read_u16()?)?;
+    validate_zone_offset_minutes(cursor.read_i16()?)?;
     let start_timestamp_millis = cursor.read_u64()?;
     let record_count = cursor.read_u64()?;
     let mut entries = Vec::new();
@@ -179,6 +187,15 @@ fn read_u16_from_reader(reader: &mut impl Read) -> Result<u16, String> {
     Ok(u16::from_be_bytes(bytes))
 }
 
+/// Reads one big-endian signed 16-bit integer from a stream.
+fn read_i16_from_reader(reader: &mut impl Read) -> Result<i16, String> {
+    let mut bytes = [0_u8; 2];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    Ok(i16::from_be_bytes(bytes))
+}
+
 /// Reads one big-endian 64-bit integer from a stream.
 fn read_u64_from_reader(reader: &mut impl Read) -> Result<u64, String> {
     let mut bytes = [0_u8; 8];
@@ -213,6 +230,14 @@ fn read_all_from_decoder(mut reader: impl Read) -> Result<Vec<u8>, String> {
         .read_to_end(&mut output)
         .map_err(|error| format!("failed to decompress payload: {error}"))?;
     Ok(output)
+}
+
+/// Validates one file-level time-zone offset in minutes.
+fn validate_zone_offset_minutes(offset_minutes: i16) -> Result<i16, String> {
+    if !(-18 * 60..=18 * 60).contains(&i32::from(offset_minutes)) {
+        return Err(format!("unsupported time-zone offset minutes: {offset_minutes}"));
+    }
+    Ok(offset_minutes)
 }
 
 /// Consumes a known number of bytes from a stream without decoding them.
@@ -261,6 +286,12 @@ impl<'a> CursorReader<'a> {
         ]))
     }
 
+    /// Reads one big-endian signed 16-bit integer.
+    fn read_i16(&mut self) -> Result<i16, String> {
+        let bytes = self.read_exact(2)?;
+        Ok(i16::from_be_bytes([bytes[0], bytes[1]]))
+    }
+
     /// Reads one big-endian 32-bit integer.
     fn read_u32(&mut self) -> Result<u32, String> {
         let bytes = self.read_exact(4)?;
@@ -299,7 +330,7 @@ mod tests {
      */
     fn sample_bytes() -> Vec<u8> {
         vec![
-            0, 0,
+            0, 0, 0, 0,
             0, 0, 1, 139, 207, 229, 104, 0,
             0, 0, 0, 0, 0, 0, 0, 2,
             0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -331,15 +362,9 @@ mod tests {
 
     #[test]
     fn format_timestamp_renders_normal_log_shape() {
-        let value = format_timestamp_millis(1_777_658_460_253).expect("format timestamp");
+        let value = format_timestamp_millis(1_777_672_860_253, 0).expect("format timestamp");
 
-        assert_eq!(value.len(), 23);
-        assert_eq!(&value[4..5], "-");
-        assert_eq!(&value[7..8], "-");
-        assert_eq!(&value[10..11], " ");
-        assert_eq!(&value[13..14], ":");
-        assert_eq!(&value[16..17], ":");
-        assert_eq!(&value[19..20], ",");
+        assert_eq!(value, "2026-05-01 22:01:00,253");
     }
 
     #[test]
@@ -354,7 +379,7 @@ mod tests {
         fs::write(
             &path,
             vec![
-                0, 0,
+                0, 0, 0, 0,
                 0, 0, 1, 139, 207, 229, 104, 0,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
@@ -366,6 +391,7 @@ mod tests {
         let window = read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
 
         assert_eq!(window.total_records, 2);
+        assert_eq!(window.zone_offset_minutes, 0);
         assert_eq!(window.visible_entries.len(), 1);
         assert_eq!(window.visible_entries[0].content, "alpha");
 
@@ -387,7 +413,7 @@ mod tests {
             encoder.write_all(b"alpha").expect("write gzip payload");
             encoder.finish().expect("finish gzip payload");
         }
-        let mut bytes = vec![0, 1];
+        let mut bytes = vec![0, 1, 0, 0];
         bytes.extend_from_slice(&[0, 0, 1, 139, 207, 229, 104, 0]);
         bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
         bytes.extend_from_slice(&[0, 0, 0, 0]);
@@ -416,7 +442,7 @@ mod tests {
         fs::write(
             &path,
             vec![
-                0, 0,
+                0, 0, 0, 0,
                 0, 0, 1, 139, 207, 229, 104, 0,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 0, 0, 0, 0, 0, 0, 2, b'b', b'a',
