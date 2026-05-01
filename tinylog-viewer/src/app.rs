@@ -33,9 +33,8 @@ impl ViewerApplication {
                 ));
                 for entry in entries.iter().take(self.config.page_size) {
                     lines.push(format!(
-                        "{} | +{}ms | {}",
+                        "{} {}",
                         format::format_timestamp_millis(entry.timestamp_millis)?,
-                        entry.offset_millis,
                         entry.content
                     ));
                 }
@@ -109,6 +108,7 @@ mod tests {
 
         assert!(output.contains("tinylog viewer opened"));
         assert!(output.contains(&format::format_timestamp_millis(1_700_000_000_000).expect("format time")));
+        assert!(!output.contains("+25ms"));
         assert!(output.contains("alpha"));
         assert!(output.contains("beta"));
 
