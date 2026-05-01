@@ -14,6 +14,11 @@ import java.util.Collections;
  */
 final class PrototypeLogFileFormat {
     /**
+     * Defines the dedicated tinylog file extension for prototype files.
+     */
+    static final String FILE_EXTENSION = ".tog";
+
+    /**
      * Stores the fixed-size header bytes: start timestamp plus record count.
      */
     static final int HEADER_BYTES = 16;

@@ -94,7 +94,8 @@ The current prototype uses a compact binary layout in **big-endian** order:
 
 1. **Start timestamp**: 8 bytes, milliseconds since epoch
 2. **Record count**: 8 bytes
-3. Repeated for each record:
+3. **File extension**: `.tog`
+4. Repeated for each record:
    - **Millisecond offset** from the start timestamp: 4 bytes
    - **Content length**: 3 bytes
    - **Content bytes**: UTF-8 payload
@@ -112,6 +113,7 @@ Current prototype notes:
 
 - The Java prototype writer stores the rendered log **message** as the payload
 - The Java prototype reader rebuilds `LogRecord` instances using the decoded message
+- The Java prototype converter can transform `normal.log` plaintext input into a `.tog` file
 - The Rust viewer reads the same binary format directly and prints timestamps plus content
 - This prototype focuses on validating the binary framing first, before adding richer structured payloads and indexes
 

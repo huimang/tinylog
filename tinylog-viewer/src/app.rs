@@ -74,20 +74,20 @@ mod tests {
     #[test]
     fn banner_contains_target_file_when_provided() {
         let mut config = ViewerConfig::default();
-        config.log_file = Some("demo.tlog".to_string());
+        config.log_file = Some("demo.tog".to_string());
 
         let app = ViewerApplication::new(config);
 
         assert_eq!(
             app.banner(),
-            "tinylog viewer scaffold initialized for demo.tlog."
+            "tinylog viewer scaffold initialized for demo.tog."
         );
     }
 
     #[test]
     fn run_renders_records_from_prototype_file() {
         let path = std::env::temp_dir().join(format!(
-            "tinylog-viewer-test-{}.tlog",
+            "tinylog-viewer-test-{}.tog",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("clock")

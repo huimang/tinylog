@@ -21,7 +21,7 @@ public class PrototypeLogFileReaderWriterTest {
 
     @Test
     void shouldRoundTripPrototypeFile() throws IOException {
-        Path path = tempDir.resolve("sample.tlog");
+        Path path = tempDir.resolve("sample.tog");
         try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path)) {
             writer.append(new LogRecord(1_700_000_000_000L, LogLevel.INFO, "app", "main", "alpha", null));
             writer.append(new LogRecord(1_700_000_000_125L, LogLevel.ERROR, "app", "main", "beta", null));
@@ -42,7 +42,7 @@ public class PrototypeLogFileReaderWriterTest {
 
     @Test
     void shouldFilterPrototypeRecordsByQuery() throws IOException {
-        Path path = tempDir.resolve("query.tlog");
+        Path path = tempDir.resolve("query.tog");
         try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path)) {
             writer.append(new LogRecord(10_000L, LogLevel.INFO, "app", "main", "alpha", null));
             writer.append(new LogRecord(10_030L, LogLevel.INFO, "app", "main", "beta", null));
