@@ -30,6 +30,7 @@ pub struct InteractiveViewerSession {
 pub struct RenderedFrame {
     pub header: String,
     pub line_number_width: usize,
+    pub content_width: usize,
     pub rows: Vec<RenderedRow>,
 }
 
@@ -38,6 +39,7 @@ pub struct RenderedFrame {
 pub struct RenderedRow {
     pub line_number: Option<String>,
     pub content: String,
+    pub is_current: bool,
 }
 
 impl InteractiveViewerSession {
@@ -96,6 +98,7 @@ impl InteractiveViewerSession {
                         None
                     },
                     content: rendered_line,
+                    is_current: index == 0,
                 });
                 if rows.len() >= visible_row_capacity {
                     break;
@@ -110,11 +113,13 @@ impl InteractiveViewerSession {
             rows.push(RenderedRow {
                 line_number: None,
                 content: String::new(),
+                is_current: false,
             });
         }
         Ok(RenderedFrame {
             header,
             line_number_width,
+            content_width,
             rows,
         })
     }

@@ -3,7 +3,7 @@ use crate::session::InteractiveViewerSession;
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
-use crossterm::style::{Color, ResetColor, SetForegroundColor};
+use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{self, ClearType};
 use std::io::{self, Write};
 
@@ -108,8 +108,10 @@ impl ViewerApplication {
                 stdout,
                 index + 1,
                 frame.line_number_width,
+                frame.content_width,
                 row.line_number.as_deref(),
                 &row.content,
+                row.is_current,
             )?;
         }
         stdout.flush().map_err(|error| format!("failed to flush output: {error}"))?;
@@ -122,8 +124,10 @@ impl ViewerApplication {
         stdout: &mut io::Stdout,
         row_index: usize,
         line_number_width: usize,
+        content_width: usize,
         line_number: Option<&str>,
         content: &str,
+        is_current: bool,
     ) -> Result<(), String> {
         let row = u16::try_from(row_index).map_err(|_| "terminal row index exceeds supported range".to_string())?;
         execute!(stdout, cursor::MoveTo(0, row)).map_err(|error| format!("failed to move cursor: {error}"))?;
@@ -142,7 +146,15 @@ impl ViewerApplication {
         write!(stdout, " │ ").map_err(|error| format!("failed to write pane separator: {error}"))?;
         execute!(stdout, cursor::MoveTo((line_number_width + 3) as u16, row))
             .map_err(|error| format!("failed to move to content pane: {error}"))?;
-        write!(stdout, "{content}").map_err(|error| format!("failed to write content pane: {error}"))?;
+        if is_current {
+            execute!(stdout, SetBackgroundColor(Color::Rgb { r: 13, g: 13, b: 13 }))
+                .map_err(|error| format!("failed to set current-row background: {error}"))?;
+            write!(stdout, "{content:<width$}", width = content_width)
+                .map_err(|error| format!("failed to write highlighted content pane: {error}"))?;
+            execute!(stdout, ResetColor).map_err(|error| format!("failed to reset color: {error}"))?;
+        } else {
+            write!(stdout, "{content}").map_err(|error| format!("failed to write content pane: {error}"))?;
+        }
         Ok(())
     }
 }
