@@ -26,6 +26,8 @@ public final class PlainTextLogToTinylogConverter {
      * Defines the fixed character width of one leading plaintext timestamp.
      */
     private static final int TIMESTAMP_TEXT_LENGTH = 23;
+    private static final char TIMESTAMP_SEPARATOR = ' ';
+    private static final String CONVERTER_SOURCE = "converter";
 
     /**
      * Stores the compression algorithm used for completed trunks.
@@ -100,29 +102,35 @@ public final class PlainTextLogToTinylogConverter {
      * Parses one plaintext line into one logical log record.
      */
     private LogRecord parseLine(Path plainTextLogPath, int lineNumber, String line) {
-        if (line.length() <= TIMESTAMP_TEXT_LENGTH + 1 || line.charAt(TIMESTAMP_TEXT_LENGTH) != ' ') {
-            throw new IllegalArgumentException("invalid log line at "
-                    + plainTextLogPath + ":" + lineNumber
-                    + ", expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'");
-        }
-        long timestampMillis;
-        try {
-            timestampMillis = LocalDateTime.parse(
-                    line.substring(0, TIMESTAMP_TEXT_LENGTH),
-                    TIMESTAMP_FORMATTER)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli();
-        } catch (DateTimeParseException exception) {
-            throw new IllegalArgumentException("invalid timestamp at "
-                    + plainTextLogPath + ":" + lineNumber, exception);
-        }
+        validateLineShape(plainTextLogPath, lineNumber, line);
+        long timestampMillis = parseTimestampMillis(plainTextLogPath, lineNumber, line);
         String message = line.substring(TIMESTAMP_TEXT_LENGTH + 1);
         return new LogRecord(
                 timestampMillis,
                 LogLevel.INFO,
                 plainTextLogPath.getFileName().toString(),
-                "converter",
+                CONVERTER_SOURCE,
                 message,
                 null);
+    }
+
+    private void validateLineShape(Path plainTextLogPath, int lineNumber, String line) {
+        if (line.length() <= TIMESTAMP_TEXT_LENGTH + 1 || line.charAt(TIMESTAMP_TEXT_LENGTH) != TIMESTAMP_SEPARATOR) {
+            throw new IllegalArgumentException("invalid log line at "
+                    + plainTextLogPath + ":" + lineNumber
+                    + ", expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'");
+        }
+    }
+
+    private long parseTimestampMillis(Path plainTextLogPath, int lineNumber, String line) {
+        try {
+            return LocalDateTime.parse(line.substring(0, TIMESTAMP_TEXT_LENGTH), TIMESTAMP_FORMATTER)
+                    .toInstant(ZoneOffset.UTC)
+                    .toEpochMilli();
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException(
+                    "invalid timestamp at " + plainTextLogPath + ":" + lineNumber,
+                    exception);
+        }
     }
 }

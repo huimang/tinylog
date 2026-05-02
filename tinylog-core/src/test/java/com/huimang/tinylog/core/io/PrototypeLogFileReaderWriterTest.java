@@ -123,7 +123,7 @@ public class PrototypeLogFileReaderWriterTest {
      * Drains one iterator into a stable list for assertions.
      */
     private static List<LogRecord> collect(Iterator<LogRecord> iterator) {
-        List<LogRecord> result = new ArrayList<LogRecord>();
+        List<LogRecord> result = new ArrayList<>();
         while (iterator.hasNext()) {
             result.add(iterator.next());
         }

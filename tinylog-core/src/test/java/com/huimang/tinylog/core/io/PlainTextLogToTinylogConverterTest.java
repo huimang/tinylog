@@ -11,7 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -28,7 +30,7 @@ public class PlainTextLogToTinylogConverterTest {
         Path tinylogPath = tempDir.resolve("normal.tog");
         Files.write(
                 normalLogPath,
-                java.util.Arrays.asList(
+                Arrays.asList(
                         "2026-05-01 22:01:00,253 service started",
                         "2026-05-01 22:01:00,278 user signed in"),
                 StandardCharsets.UTF_8);
@@ -102,7 +104,7 @@ public class PlainTextLogToTinylogConverterTest {
      * Drains one iterator into a stable list for assertions.
      */
     private static List<LogRecord> collect(Iterator<LogRecord> iterator) {
-        List<LogRecord> result = new ArrayList<LogRecord>();
+        List<LogRecord> result = new ArrayList<>();
         while (iterator.hasNext()) {
             result.add(iterator.next());
         }
@@ -139,8 +141,8 @@ public class PlainTextLogToTinylogConverterTest {
         /**
          * Matches the plaintext timestamp format accepted by the converter.
          */
-        private static final java.time.format.DateTimeFormatter TIMESTAMP_FORMATTER =
-                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+        private static final DateTimeFormatter TIMESTAMP_FORMATTER =
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
 
         private DateTimeFormatterHolder() {
         }

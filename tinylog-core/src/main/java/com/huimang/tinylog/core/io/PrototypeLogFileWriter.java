@@ -14,9 +14,14 @@ import java.util.Objects;
  * Writes the current trunk-based tinylog file format to a single target file.
  */
 public final class PrototypeLogFileWriter implements LogWriter {
+    private static final String MAIN_FILE_MODE = "rw";
+    private static final String BUFFER_FILE_PREFIX = "log-buffer-";
+    private static final String BUFFER_FILE_SUFFIX = ".tmp";
+
     private final Path path;
     private final CompressionAlgorithm compressionAlgorithm;
     private final int trunkSizeKb;
+    private final int trunkSizeBytes;
     private final RandomAccessFile mainFile;
     private boolean closed;
     private long baseTimestampUtcMillis = -1L;
@@ -51,11 +56,12 @@ public final class PrototypeLogFileWriter implements LogWriter {
         this.path = Objects.requireNonNull(path, "path");
         this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
         this.trunkSizeKb = PrototypeLogFileFormat.validateTrunkSizeKb(trunkSizeKb);
+        this.trunkSizeBytes = PrototypeLogFileFormat.trunkSizeBytes(this.trunkSizeKb);
         Path parent = path.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
-        this.mainFile = new RandomAccessFile(path.toFile(), "rw");
+        this.mainFile = new RandomAccessFile(path.toFile(), MAIN_FILE_MODE);
         this.mainFile.setLength(0L);
         PrototypeLogFileFormat.writeHeader(
                 mainFile,
@@ -71,26 +77,20 @@ public final class PrototypeLogFileWriter implements LogWriter {
     public void append(LogRecord record) throws IOException {
         ensureOpen();
         Objects.requireNonNull(record, "record");
-        if (lastTimestampUtcMillis != Long.MIN_VALUE && record.getTimestampMillis() < lastTimestampUtcMillis) {
-            throw new IllegalArgumentException("records must be appended in timestamp order");
-        }
-        if (baseTimestampUtcMillis < 0L) {
-            baseTimestampUtcMillis = record.getTimestampMillis();
-            updateBaseTimestamp();
-        }
+        ensureTimestampOrder(record);
+        initializeBaseTimestamp(record);
         if (currentBufferLineCount == PrototypeLogFileFormat.MAX_TRUNK_LOG_LINE_COUNT) {
             flushCurrentTrunk(true);
         }
         int lineBytes = PrototypeLogFileFormat.measureRawLogLine(record);
-        if (currentBufferLineCount > 0
-                && currentBufferBytes + lineBytes > PrototypeLogFileFormat.trunkSizeBytes(trunkSizeKb)) {
+        if (wouldExceedTrunkSize(lineBytes)) {
             flushCurrentTrunk(true);
         }
         PrototypeLogFileFormat.writeRawLogLine(currentBufferOutput, record, baseTimestampUtcMillis);
         currentBufferBytes += lineBytes;
         currentBufferLineCount++;
         lastTimestampUtcMillis = record.getTimestampMillis();
-        if (currentBufferBytes >= PrototypeLogFileFormat.trunkSizeBytes(trunkSizeKb)) {
+        if (currentBufferBytes >= trunkSizeBytes) {
             flushCurrentTrunk(true);
         }
     }
@@ -127,7 +127,8 @@ public final class PrototypeLogFileWriter implements LogWriter {
     private void openNextBuffer() throws IOException {
         currentBufferPath = resolveBufferPath(nextTrunkIndex);
         Files.deleteIfExists(currentBufferPath);
-        currentBufferOutput = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(currentBufferPath)));
+        currentBufferOutput =
+                new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(currentBufferPath)));
         currentBufferBytes = 0;
         currentBufferLineCount = 0;
     }
@@ -200,9 +201,27 @@ public final class PrototypeLogFileWriter implements LogWriter {
      * Resolves the temporary buffer file path for one trunk index.
      */
     private Path resolveBufferPath(int trunkIndex) {
-        String fileName = "log-buffer-" + trunkIndex + ".tmp";
+        String fileName = BUFFER_FILE_PREFIX + trunkIndex + BUFFER_FILE_SUFFIX;
         Path parent = path.getParent();
         return parent == null ? Paths.get(fileName) : parent.resolve(fileName);
+    }
+
+    private void ensureTimestampOrder(LogRecord record) {
+        if (lastTimestampUtcMillis != Long.MIN_VALUE && record.getTimestampMillis() < lastTimestampUtcMillis) {
+            throw new IllegalArgumentException("records must be appended in timestamp order");
+        }
+    }
+
+    private void initializeBaseTimestamp(LogRecord record) throws IOException {
+        if (baseTimestampUtcMillis >= 0L) {
+            return;
+        }
+        baseTimestampUtcMillis = record.getTimestampMillis();
+        updateBaseTimestamp();
+    }
+
+    private boolean wouldExceedTrunkSize(int lineBytes) {
+        return currentBufferLineCount > 0 && currentBufferBytes + lineBytes > trunkSizeBytes;
     }
 
     private void ensureOpen() {

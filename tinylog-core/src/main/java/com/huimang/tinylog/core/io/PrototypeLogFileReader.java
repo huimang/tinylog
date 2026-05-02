@@ -11,6 +11,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -20,6 +21,8 @@ import java.util.Objects;
  * Reads the current trunk-based tinylog file format from a single file path.
  */
 public final class PrototypeLogFileReader implements LogReader {
+    private static final int VERSION_BYTES = 3;
+
     private final Path path;
     private boolean closed;
 
@@ -74,18 +77,12 @@ public final class PrototypeLogFileReader implements LogReader {
         private PrototypeLogIterator(Path path, LogQuery query) throws IOException {
             this.input = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)));
             this.query = query;
-            this.currentTrunkRecords = java.util.Collections.<LogRecord>emptyList();
+            this.currentTrunkRecords = Collections.emptyList();
             try {
-                byte[] version = new byte[3];
-                input.readFully(version);
-                this.compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedShort());
-                PrototypeLogFileFormat.validateTrunkSizeKb(input.readUnsignedShort());
-                this.baseTimestampUtcMillis = input.readLong();
-                long totalLogLineCount = input.readLong();
-                if (totalLogLineCount < 0L) {
-                    throw new IOException("total log line count must not be negative");
-                }
-                this.remainingTrunks = PrototypeLogFileFormat.readUnsignedMedium(input);
+                Header header = readHeader(input);
+                this.compressionAlgorithm = header.compressionAlgorithm;
+                this.baseTimestampUtcMillis = header.baseTimestampUtcMillis;
+                this.remainingTrunks = header.trunkCount;
             } catch (IOException exception) {
                 closeQuietly();
                 throw exception;
@@ -167,7 +164,7 @@ public final class PrototypeLogFileReader implements LogReader {
          */
         private List<LogRecord> parseRawTrunk(byte[] rawTrunkBytes, int trunkLogLineCount) throws IOException {
             DataInputStream trunkInput = new DataInputStream(new ByteArrayInputStream(rawTrunkBytes));
-            List<LogRecord> records = new ArrayList<LogRecord>(trunkLogLineCount);
+            List<LogRecord> records = new ArrayList<>(trunkLogLineCount);
             for (int index = 0; index < trunkLogLineCount; index++) {
                 long offsetMillis = PrototypeLogFileFormat.readUnsignedInt(trunkInput);
                 int contentLength = trunkInput.readInt();
@@ -184,7 +181,7 @@ public final class PrototypeLogFileReader implements LogReader {
             if (trunkInput.available() != 0) {
                 throw new IOException("raw trunk payload contains trailing bytes");
             }
-            return java.util.Collections.unmodifiableList(records);
+            return Collections.unmodifiableList(records);
         }
 
         /**
@@ -222,6 +219,35 @@ public final class PrototypeLogFileReader implements LogReader {
                 input.close();
             } catch (IOException ignored) {
                 // Nothing to do when closing an exhausted iterator.
+            }
+        }
+
+        private static Header readHeader(DataInputStream input) throws IOException {
+            byte[] version = new byte[VERSION_BYTES];
+            input.readFully(version);
+            CompressionAlgorithm compressionAlgorithm = CompressionAlgorithm.fromId(input.readUnsignedShort());
+            PrototypeLogFileFormat.validateTrunkSizeKb(input.readUnsignedShort());
+            long baseTimestampUtcMillis = input.readLong();
+            long totalLogLineCount = input.readLong();
+            if (totalLogLineCount < 0L) {
+                throw new IOException("total log line count must not be negative");
+            }
+            int trunkCount = PrototypeLogFileFormat.readUnsignedMedium(input);
+            return new Header(compressionAlgorithm, baseTimestampUtcMillis, trunkCount);
+        }
+
+        private static final class Header {
+            private final CompressionAlgorithm compressionAlgorithm;
+            private final long baseTimestampUtcMillis;
+            private final int trunkCount;
+
+            private Header(
+                    CompressionAlgorithm compressionAlgorithm,
+                    long baseTimestampUtcMillis,
+                    int trunkCount) {
+                this.compressionAlgorithm = compressionAlgorithm;
+                this.baseTimestampUtcMillis = baseTimestampUtcMillis;
+                this.trunkCount = trunkCount;
             }
         }
     }

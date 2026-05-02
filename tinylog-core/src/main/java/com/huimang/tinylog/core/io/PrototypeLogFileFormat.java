@@ -16,6 +16,11 @@ import java.util.Properties;
  * Holds the binary layout rules for the current trunk-based tinylog file format.
  */
 final class PrototypeLogFileFormat {
+    private static final int VERSION_BYTES = 3;
+    private static final int BYTES_PER_KB = 1024;
+    private static final int MAX_UNSIGNED_MEDIUM = 0xFF_FFFF;
+    private static final String VERSION_PROPERTY_NAME = "tinylog.version";
+
     /**
      * Defines the dedicated tinylog file extension for persisted files.
      */
@@ -129,7 +134,7 @@ final class PrototypeLogFileFormat {
      * Returns the configured trunk size in bytes.
      */
     static int trunkSizeBytes(int trunkSizeKb) {
-        return validateTrunkSizeKb(trunkSizeKb) * 1024;
+        return validateTrunkSizeKb(trunkSizeKb) * BYTES_PER_KB;
     }
 
     /**
@@ -180,7 +185,7 @@ final class PrototypeLogFileFormat {
      * Writes one unsigned 24-bit integer in big-endian order.
      */
     static void writeUnsignedMedium(DataOutput output, int value) throws IOException {
-        if (value < 0 || value > 0xFF_FFFF) {
+        if (value < 0 || value > MAX_UNSIGNED_MEDIUM) {
             throw new IllegalArgumentException("value must fit in 3 bytes");
         }
         output.writeByte((value >>> 16) & 0xFF);
@@ -208,25 +213,32 @@ final class PrototypeLogFileFormat {
         } catch (IOException exception) {
             throw new IllegalStateException("failed to load tinylog version metadata", exception);
         }
-        String versionText = properties.getProperty("tinylog.version");
+        String versionText = properties.getProperty(VERSION_PROPERTY_NAME);
         if (versionText == null || versionText.trim().isEmpty()) {
             throw new IllegalStateException("missing tinylog.version property");
         }
-        String numericVersion = versionText.split("-", 2)[0];
-        String[] segments = numericVersion.split("\\.");
+        return parseVersionTuple(versionText);
+    }
+
+    private static byte[] parseVersionTuple(String versionText) {
+        String[] segments = versionText.split("-", 2)[0].split("\\.");
         byte[] version = new byte[] {0, 0, 0};
         for (int index = 0; index < version.length && index < segments.length; index++) {
-            int value;
-            try {
-                value = Integer.parseInt(segments[index]);
-            } catch (NumberFormatException exception) {
-                throw new IllegalStateException("invalid tinylog version segment: " + segments[index], exception);
-            }
-            if (value < 0 || value > 0xFF) {
-                throw new IllegalStateException("tinylog version segment must fit in one byte");
-            }
-            version[index] = (byte) value;
+            version[index] = parseVersionSegment(segments[index]);
         }
         return version;
+    }
+
+    private static byte parseVersionSegment(String versionSegment) {
+        int value;
+        try {
+            value = Integer.parseInt(versionSegment);
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException("invalid tinylog version segment: " + versionSegment, exception);
+        }
+        if (value < 0 || value > 0xFF) {
+            throw new IllegalStateException("tinylog version segment must fit in one byte");
+        }
+        return (byte) value;
     }
 }
