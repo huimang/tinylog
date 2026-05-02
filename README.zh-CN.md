@@ -94,10 +94,9 @@ scripts/tinylog-convert.sh normal.log
 期望输出：
 
 ```text
-counting total lines in normal.log
 using serial conversion mode for inputs up to 100.00 MiB
-progress: 0/3 (0.00%)
-progress: 3/3 (100.00%)
+progress: 0/120 (0.00%)
+progress: 120/120 (100.00%)
 converted normal.log to normal.tog using gzip
 source size: 120 (120 B)
 output size: 111 (111 B)
@@ -105,13 +104,12 @@ compression ratio: 92.50%
 elapsed: 4ms
 ```
 
-对于超过 `100 MiB` 的大文件，转换器会切换到并行模式，并按 **已完成 trunk / 分配 trunk** 的比例输出一行实时刷新的 worker 进度，例如：
+对于超过 `100 MiB` 的大文件，转换器会直接按字节范围开始索引，并按 **已完成 trunk / 分配 trunk** 的比例输出一行实时刷新的 worker 进度，例如：
 
 ```text
-using parallel conversion mode for inputs larger than 100.00 MiB
 building trunk index and preparing worker assignments for huge.log
-indexing: 0/1015076 (0.00%)
-indexing: 1015076/1015076 (100.00%)
+indexing: 0/10737418317 (0.00%)
+indexing: 10737418317/10737418317 (100.00%)
 compressing 157 trunks with 16 workers
 writing: 1: 0% 2: 0% 3: 0% 4: 0%
 writing: 1: 10% 2: 20% 3: 24% 4: 10%

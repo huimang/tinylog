@@ -24,6 +24,7 @@ const TIMESTAMP_TEXT_LENGTH: usize = 23;
 const TIMESTAMP_SEPARATOR: char = ' ';
 const LINE_HEADER_BYTES: usize = 9;
 const BYTES_PER_KB: usize = 1024;
+const INDEX_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 const PROGRESS_UPDATE_STEP: u64 = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,17 +46,12 @@ struct PlannedTrunk {
     trunk_index: usize,
     source_byte_start: u64,
     source_byte_length: u64,
-    source_line_start: u64,
-    source_line_count: u64,
-    record_count: u16,
 }
 
 /// Holds the complete conversion plan derived by the master thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConversionPlan {
     base_timestamp_millis: Option<u64>,
-    total_records: u64,
-    covered_source_lines: u64,
     trunks: Vec<PlannedTrunk>,
 }
 
@@ -63,7 +59,6 @@ struct ConversionPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlannedBatch {
     batch_index: usize,
-    source_line_count: u64,
     trunks: Vec<PlannedTrunk>,
 }
 
@@ -72,15 +67,15 @@ struct PlannedBatch {
 struct BatchResult {
     batch_index: usize,
     temp_path: PathBuf,
-    source_line_count: u64,
+    total_record_count: u64,
+    first_timestamp_millis: Option<u64>,
+    last_timestamp_millis: Option<u64>,
 }
 
 /// Reports one worker-side progress snapshot back to the master thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkerProgress {
     worker_index: usize,
-    processed_source_lines: u64,
-    total_source_lines: u64,
     processed_trunks: usize,
     total_trunks: usize,
 }
@@ -93,21 +88,12 @@ enum WorkerMessage {
     Failed(String),
 }
 
-/// Tracks one still-open trunk while the master is planning boundaries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ActiveTrunkPlan {
-    source_byte_start: u64,
-    source_byte_length: u64,
-    source_line_start: u64,
-    source_line_count: u64,
-    raw_line_bytes: usize,
-    record_count: u16,
-}
-
 /// Holds one compressed trunk payload ready for final serialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CompressedTrunk {
     line_count: u16,
+    first_timestamp_millis: Option<u64>,
+    last_timestamp_millis: Option<u64>,
     compressed_bytes: Vec<u8>,
 }
 
@@ -202,24 +188,21 @@ fn convert_plaintext_log(
 ) -> Result<ConversionSummary, String> {
     validate_tinylog_path(tinylog_path)?;
     let source_size_bytes = file_size_bytes(plain_text_log_path)?;
-    progress_reporter.write_counting_message(plain_text_log_path)?;
-
-    let total_lines = count_total_lines(plain_text_log_path)?;
     if !should_use_parallel_conversion(source_size_bytes) {
         progress_reporter.write_phase_message(&format!(
             "using serial conversion mode for inputs up to {}",
             format_size(PARALLEL_CONVERSION_THRESHOLD_BYTES)
         ))?;
-        progress_reporter.start(total_lines)?;
+        progress_reporter.start(source_size_bytes)?;
         convert_plaintext_log_serial(
             plain_text_log_path,
             tinylog_path,
             compression_algorithm,
             trunk_size_kb,
             progress_reporter,
-            total_lines,
+            source_size_bytes,
         )?;
-        progress_reporter.finish(total_lines)?;
+        progress_reporter.finish(source_size_bytes)?;
         let output_size_bytes = file_size_bytes(tinylog_path)?;
         return Ok(ConversionSummary {
             source_size_bytes,
@@ -235,36 +218,44 @@ fn convert_plaintext_log(
         "building trunk index and preparing worker assignments for {}",
         plain_text_log_path.display()
     ))?;
-    progress_reporter.start_indexing(total_lines)?;
-    let plan = build_conversion_plan(plain_text_log_path, trunk_size_kb, progress_reporter, total_lines)?;
-    progress_reporter.finish_indexing(total_lines)?;
+    progress_reporter.start_indexing(source_size_bytes)?;
+    let plan = build_conversion_plan(
+        plain_text_log_path,
+        trunk_size_kb,
+        progress_reporter,
+        source_size_bytes,
+    )?;
+    progress_reporter.finish_indexing(source_size_bytes)?;
 
     let worker_count = determine_worker_count(plan.trunks.len());
     let batches = build_worker_batches(&plan.trunks, worker_count);
-    let covered_source_lines = plan.covered_source_lines;
     progress_reporter.write_phase_message(&format!(
         "compressing {} trunks with {} workers",
         plan.trunks.len(),
         batches.len()
     ))?;
-    progress_reporter.start_parallel(covered_source_lines)?;
+    progress_reporter.start_parallel(0)?;
     let (temp_directory, batch_results) = run_worker_batches(
         plain_text_log_path,
         &plan,
         &batches,
         compression_algorithm,
         progress_reporter,
-        covered_source_lines,
+        0,
     )?;
-    progress_reporter.finish_parallel(covered_source_lines)?;
+    progress_reporter.finish_parallel(0)?;
+    let merge_metadata = summarize_batch_results(&batch_results)?;
 
     merge_batch_results(
         tinylog_path,
         compression_algorithm,
         trunk_size_kb,
-        plan.base_timestamp_millis.unwrap_or(0),
-        plan.total_records,
-        u32::try_from(plan.trunks.len()).map_err(|_| "trunk count must fit in 3 bytes".to_string())?,
+        plan.base_timestamp_millis
+            .or(merge_metadata.first_timestamp_millis)
+            .unwrap_or(0),
+        merge_metadata.total_record_count,
+        u32::try_from(plan.trunks.len())
+            .map_err(|_| "trunk count must fit in 3 bytes".to_string())?,
         &batch_results,
     )?;
     temp_directory.cleanup()?;
@@ -286,32 +277,16 @@ fn validate_tinylog_path(tinylog_path: &Path) -> Result<(), String> {
         .and_then(|value| value.to_str())
         .ok_or_else(|| format!("invalid output path: {}", tinylog_path.display()))?;
     if !file_name.ends_with(FILE_EXTENSION) {
-        return Err(format!("TinyLog files must use the {FILE_EXTENSION} extension"));
+        return Err(format!(
+            "TinyLog files must use the {FILE_EXTENSION} extension"
+        ));
     }
     Ok(())
 }
 
-fn count_total_lines(path: &Path) -> Result<u64, String> {
-    let mut reader = open_buffered_reader(path)?;
-    let mut line = String::new();
-    let mut total_lines = 0u64;
-
-    loop {
-        line.clear();
-        let bytes_read = reader
-            .read_line(&mut line)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-        if bytes_read == 0 {
-            break;
-        }
-        total_lines += 1;
-    }
-
-    Ok(total_lines)
-}
-
 fn open_buffered_reader(path: &Path) -> Result<BufReader<File>, String> {
-    let file = File::open(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let file =
+        File::open(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     Ok(BufReader::new(file))
 }
 
@@ -342,21 +317,65 @@ fn parse_line(path: &Path, line_number: usize, line: &str) -> Result<LogRecord, 
 }
 
 fn validate_line_shape(path: &Path, line_number: usize, line: &str) -> Result<(), String> {
-    if line.len() <= TIMESTAMP_TEXT_LENGTH + 1 || line.as_bytes()[TIMESTAMP_TEXT_LENGTH] != b' ' {
-        return Err(format!(
-            "invalid log line at {}:{line_number}, expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'",
-            path.display()
-        ));
+    if !is_record_start_line(line) {
+        return Err(invalid_log_line_error(path, line_number));
     }
     Ok(())
+}
+
+fn invalid_log_line_error(path: &Path, line_number: usize) -> String {
+    format!(
+        "invalid log line at {}:{line_number}, expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'",
+        path.display()
+    )
+}
+
+fn is_record_start_line(line: &str) -> bool {
+    is_record_start_prefix(line.as_bytes())
+}
+
+fn is_record_start_prefix(bytes: &[u8]) -> bool {
+    if bytes.len() <= TIMESTAMP_TEXT_LENGTH || bytes[TIMESTAMP_TEXT_LENGTH] != b' ' {
+        return false;
+    }
+
+    for (index, byte) in bytes[..TIMESTAMP_TEXT_LENGTH].iter().enumerate() {
+        let expected = match index {
+            4 | 7 => Some(b'-'),
+            10 => Some(b' '),
+            13 | 16 => Some(b':'),
+            19 => Some(b','),
+            _ => None,
+        };
+        if let Some(expected_byte) = expected {
+            if *byte != expected_byte {
+                return false;
+            }
+            continue;
+        }
+        if !byte.is_ascii_digit() {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn append_continuation_line(record: &mut LogRecord, line: &str) {
+    record.message.push('\n');
+    record.message.push_str(line);
 }
 
 fn parse_timestamp_millis(path: &Path, line_number: usize, line: &str) -> Result<u64, String> {
     let date_time = NaiveDateTime::parse_from_str(&line[..TIMESTAMP_TEXT_LENGTH], TIMESTAMP_FORMAT)
         .map_err(|_| format!("invalid timestamp at {}:{line_number}", path.display()))?;
     let timestamp_millis = Utc.from_utc_datetime(&date_time).timestamp_millis();
-    u64::try_from(timestamp_millis)
-        .map_err(|_| format!("timestamp before unix epoch at {}:{line_number}", path.display()))
+    u64::try_from(timestamp_millis).map_err(|_| {
+        format!(
+            "timestamp before unix epoch at {}:{line_number}",
+            path.display()
+        )
+    })
 }
 
 fn parse_level_and_message(line: &str) -> (LogLevel, String) {
@@ -392,7 +411,11 @@ fn current_format_version() -> Result<[u8; 3], String> {
     let version_without_suffix = version_text.split('-').next().unwrap_or(version_text);
     let mut version = [0_u8; 3];
 
-    for (index, segment) in version_without_suffix.split('.').take(version.len()).enumerate() {
+    for (index, segment) in version_without_suffix
+        .split('.')
+        .take(version.len())
+        .enumerate()
+    {
         let value = segment
             .parse::<u16>()
             .map_err(|error| format!("invalid tinylog version segment '{segment}': {error}"))?;
@@ -411,135 +434,162 @@ fn build_conversion_plan(
     path: &Path,
     trunk_size_kb: u16,
     progress_reporter: &mut ProgressReporter<impl Write>,
-    total_lines: u64,
+    source_size_bytes: u64,
 ) -> Result<ConversionPlan, String> {
     validate_trunk_size_kb(trunk_size_kb)?;
-    let trunk_size_bytes = usize::from(trunk_size_kb) * BYTES_PER_KB;
-    let mut reader = open_buffered_reader(path)?;
-    let mut line = String::new();
-    let mut file_offset = 0u64;
-    let mut line_number = 0u64;
-    let mut total_records = 0u64;
-    let mut covered_source_lines = 0u64;
-    let mut base_timestamp_millis = None;
-    let mut last_timestamp_millis = None;
+    let trunk_size_bytes =
+        u64::try_from(usize::from(trunk_size_kb) * BYTES_PER_KB).unwrap_or(u64::MAX);
+    let mut source_file =
+        File::open(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let mut trunks = Vec::new();
-    let mut current_trunk: Option<ActiveTrunkPlan> = None;
+    let Some(mut trunk_start) = find_next_record_start(&mut source_file, path, 0)? else {
+        return Ok(ConversionPlan {
+            base_timestamp_millis: None,
+            trunks: Vec::new(),
+        });
+    };
+    let base_timestamp_millis = read_first_record_timestamp(path, &mut source_file, trunk_start)?;
+    progress_reporter
+        .maybe_render_indexing(trunk_start.min(source_size_bytes), source_size_bytes)?;
 
     loop {
-        line.clear();
-        let bytes_read = reader
-            .read_line(&mut line)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-        if bytes_read == 0 {
+        let target_offset = trunk_start.saturating_add(trunk_size_bytes);
+        let trunk_end = if target_offset >= source_size_bytes {
+            source_size_bytes
+        } else {
+            find_next_record_start(&mut source_file, path, target_offset)?
+                .unwrap_or(source_size_bytes)
+        };
+
+        trunks.push(PlannedTrunk {
+            trunk_index: trunks.len(),
+            source_byte_start: trunk_start,
+            source_byte_length: trunk_end.saturating_sub(trunk_start),
+        });
+        progress_reporter
+            .maybe_render_indexing(trunk_end.min(source_size_bytes), source_size_bytes)?;
+
+        if trunk_end >= source_size_bytes {
             break;
         }
-
-        let line_start_offset = file_offset;
-        file_offset = file_offset.saturating_add(u64::try_from(bytes_read).unwrap_or(u64::MAX));
-        line_number = line_number.saturating_add(1);
-        trim_line_ending(&mut line);
-
-        if line.trim().is_empty() {
-            if let Some(active_trunk) = current_trunk.as_mut() {
-                active_trunk.source_line_count = active_trunk.source_line_count.saturating_add(1);
-                active_trunk.source_byte_length = file_offset.saturating_sub(active_trunk.source_byte_start);
-            }
-            progress_reporter.maybe_render_indexing(line_number, total_lines)?;
-            continue;
-        }
-
-        let record = parse_line(path, usize::try_from(line_number).unwrap_or(usize::MAX), &line)?;
-        if let Some(last_timestamp) = last_timestamp_millis {
-            if record.timestamp_millis < last_timestamp {
-                return Err("records must be appended in timestamp order".to_string());
-            }
-        }
-        if base_timestamp_millis.is_none() {
-            base_timestamp_millis = Some(record.timestamp_millis);
-        }
-
-        let line_bytes = line_byte_size(&record);
-        if should_finalize_before_append(current_trunk.as_ref(), line_bytes, trunk_size_bytes) {
-            if let Some(active_trunk) = current_trunk.take() {
-                covered_source_lines = covered_source_lines.saturating_add(active_trunk.source_line_count);
-                trunks.push(finalize_trunk_plan(trunks.len(), active_trunk));
-            }
-        }
-
-        match current_trunk.as_mut() {
-            Some(active_trunk) => {
-                active_trunk.source_line_count = active_trunk.source_line_count.saturating_add(1);
-                active_trunk.source_byte_length = file_offset.saturating_sub(active_trunk.source_byte_start);
-                active_trunk.raw_line_bytes = active_trunk.raw_line_bytes.saturating_add(line_bytes);
-                active_trunk.record_count = active_trunk.record_count.saturating_add(1);
-            }
-            None => {
-                current_trunk = Some(ActiveTrunkPlan {
-                    source_byte_start: line_start_offset,
-                    source_byte_length: file_offset.saturating_sub(line_start_offset),
-                    source_line_start: line_number,
-                    source_line_count: 1,
-                    raw_line_bytes: line_bytes,
-                    record_count: 1,
-                });
-            }
-        }
-
-        total_records = total_records.saturating_add(1);
-        last_timestamp_millis = Some(record.timestamp_millis);
-
-        if let Some(active_trunk) = current_trunk.as_ref() {
-            if should_finalize_after_append(active_trunk, trunk_size_bytes) {
-                if let Some(active_trunk) = current_trunk.take() {
-                    covered_source_lines = covered_source_lines.saturating_add(active_trunk.source_line_count);
-                    trunks.push(finalize_trunk_plan(trunks.len(), active_trunk));
-                }
-            }
-        }
-
-        progress_reporter.maybe_render_indexing(line_number, total_lines)?;
-    }
-
-    if let Some(active_trunk) = current_trunk.take() {
-        covered_source_lines = covered_source_lines.saturating_add(active_trunk.source_line_count);
-        trunks.push(finalize_trunk_plan(trunks.len(), active_trunk));
+        trunk_start = trunk_end;
     }
 
     Ok(ConversionPlan {
         base_timestamp_millis,
-        total_records,
-        covered_source_lines,
         trunks,
     })
 }
 
-fn should_finalize_before_append(
-    current_trunk: Option<&ActiveTrunkPlan>,
-    line_bytes: usize,
-    trunk_size_bytes: usize,
-) -> bool {
-    let Some(current_trunk) = current_trunk else {
-        return false;
-    };
-    current_trunk.record_count == MAX_TRUNK_LOG_LINE_COUNT
-        || (current_trunk.record_count > 0
-            && current_trunk.raw_line_bytes.saturating_add(line_bytes) > trunk_size_bytes)
-}
-
-fn should_finalize_after_append(current_trunk: &ActiveTrunkPlan, trunk_size_bytes: usize) -> bool {
-    current_trunk.record_count == MAX_TRUNK_LOG_LINE_COUNT || current_trunk.raw_line_bytes >= trunk_size_bytes
-}
-
-fn finalize_trunk_plan(trunk_index: usize, active_trunk: ActiveTrunkPlan) -> PlannedTrunk {
-    PlannedTrunk {
-        trunk_index,
-        source_byte_start: active_trunk.source_byte_start,
-        source_byte_length: active_trunk.source_byte_length,
-        source_line_start: active_trunk.source_line_start,
-        source_line_count: active_trunk.source_line_count,
-        record_count: active_trunk.record_count,
+fn read_first_record_timestamp(
+    path: &Path,
+    source_file: &mut File,
+    record_start_offset: u64,
+) -> Result<Option<u64>, String> {
+    source_file
+        .seek(SeekFrom::Start(record_start_offset))
+        .map_err(|error| format!("failed to seek {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(source_file);
+    let mut line = String::new();
+    let bytes_read = reader
+        .read_line(&mut line)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    if bytes_read == 0 {
+        return Ok(None);
     }
+    trim_line_ending(&mut line);
+    let record = parse_line(path, 1, &line)?;
+    Ok(Some(record.timestamp_millis))
+}
+
+fn find_next_record_start(
+    source_file: &mut File,
+    path: &Path,
+    start_offset: u64,
+) -> Result<Option<u64>, String> {
+    let file_size = source_file
+        .metadata()
+        .map_err(|error| format!("failed to read {} metadata: {error}", path.display()))?
+        .len();
+    if start_offset >= file_size {
+        return Ok(None);
+    }
+
+    let mut at_line_start = start_offset == 0;
+    if !at_line_start {
+        source_file
+            .seek(SeekFrom::Start(start_offset.saturating_sub(1)))
+            .map_err(|error| format!("failed to seek {}: {error}", path.display()))?;
+        let mut previous_byte = [0_u8; 1];
+        source_file
+            .read_exact(&mut previous_byte)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        at_line_start = previous_byte[0] == b'\n';
+    }
+
+    source_file
+        .seek(SeekFrom::Start(start_offset))
+        .map_err(|error| format!("failed to seek {}: {error}", path.display()))?;
+    let mut buffer = [0_u8; INDEX_SCAN_BUFFER_BYTES];
+    let mut absolute_offset = start_offset;
+    let mut candidate_offset = None;
+    let mut candidate_prefix = Vec::with_capacity(TIMESTAMP_TEXT_LENGTH + 1);
+
+    loop {
+        let bytes_read = source_file
+            .read(&mut buffer)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+
+        for byte in &buffer[..bytes_read] {
+            if at_line_start {
+                candidate_offset = Some(absolute_offset);
+                candidate_prefix.clear();
+                at_line_start = false;
+            }
+
+            if let Some(offset) = candidate_offset {
+                if candidate_prefix.len() < TIMESTAMP_TEXT_LENGTH + 1 {
+                    candidate_prefix.push(*byte);
+                    if candidate_prefix.len() == TIMESTAMP_TEXT_LENGTH + 1
+                        && is_record_start_prefix(&candidate_prefix)
+                    {
+                        return Ok(Some(offset));
+                    }
+                }
+            }
+
+            absolute_offset = absolute_offset.saturating_add(1);
+            if *byte == b'\n' {
+                at_line_start = true;
+                candidate_offset = None;
+                candidate_prefix.clear();
+            }
+        }
+    }
+}
+
+fn write_trunk_record(
+    source_path: &Path,
+    raw_trunk_bytes: &mut Vec<u8>,
+    base_timestamp_millis: u64,
+    last_timestamp_millis: &mut Option<u64>,
+    record_count: u16,
+    record: LogRecord,
+) -> Result<u16, String> {
+    if let Some(last_timestamp) = *last_timestamp_millis {
+        if record.timestamp_millis < last_timestamp {
+            return Err(format!(
+                "records must be appended in timestamp order in {}",
+                source_path.display()
+            ));
+        }
+    }
+    write_raw_log_line(raw_trunk_bytes, &record, base_timestamp_millis)?;
+    *last_timestamp_millis = Some(record.timestamp_millis);
+    Ok(record_count.saturating_add(1))
 }
 
 fn determine_worker_count(trunk_count: usize) -> usize {
@@ -566,13 +616,8 @@ fn build_worker_batches(trunks: &[PlannedTrunk], worker_count: usize) -> Vec<Pla
     for batch_index in 0..batch_count {
         let batch_len = trunks_per_batch + usize::from(batch_index < remainder);
         let batch_trunks = trunks[cursor..cursor + batch_len].to_vec();
-        let source_line_count = batch_trunks
-            .iter()
-            .map(|trunk| trunk.source_line_count)
-            .sum::<u64>();
         batches.push(PlannedBatch {
             batch_index,
-            source_line_count,
             trunks: batch_trunks,
         });
         cursor += batch_len;
@@ -597,18 +642,17 @@ fn run_worker_batches(
     let base_timestamp_millis = plan.base_timestamp_millis.unwrap_or(0);
     let (sender, receiver) = mpsc::channel::<WorkerMessage>();
     let mut handles = Vec::with_capacity(batches.len());
-    let mut worker_states = vec![WorkerProgress {
-        worker_index: 0,
-        processed_source_lines: 0,
-        total_source_lines: 0,
-        processed_trunks: 0,
-        total_trunks: 0,
-    }; batches.len()];
+    let mut worker_states = vec![
+        WorkerProgress {
+            worker_index: 0,
+            processed_trunks: 0,
+            total_trunks: 0,
+        };
+        batches.len()
+    ];
     for (index, batch) in batches.iter().enumerate() {
         worker_states[index] = WorkerProgress {
             worker_index: index,
-            processed_source_lines: 0,
-            total_source_lines: batch.source_line_count,
             processed_trunks: 0,
             total_trunks: batch.trunks.len(),
         };
@@ -678,8 +722,10 @@ fn process_batch(
     let temp_path = temp_dir.join(format!("batch-{:06}.part", batch.batch_index));
     let mut batch_file = File::create(&temp_path)
         .map_err(|error| format!("failed to create {}: {error}", temp_path.display()))?;
-    let mut processed_source_lines = 0u64;
     let total_trunks = batch.trunks.len();
+    let mut total_record_count = 0u64;
+    let mut first_timestamp_millis = None;
+    let mut last_timestamp_millis = None;
 
     for (processed_trunks, trunk) in batch.trunks.iter().enumerate() {
         let compressed_trunk = compress_planned_trunk(
@@ -702,12 +748,17 @@ fn process_batch(
         batch_file
             .write_all(&compressed_trunk.compressed_bytes)
             .map_err(|error| format!("failed to write {}: {error}", temp_path.display()))?;
-        processed_source_lines = processed_source_lines.saturating_add(trunk.source_line_count);
+        total_record_count =
+            total_record_count.saturating_add(u64::from(compressed_trunk.line_count));
+        if first_timestamp_millis.is_none() {
+            first_timestamp_millis = compressed_trunk.first_timestamp_millis;
+        }
+        last_timestamp_millis = compressed_trunk
+            .last_timestamp_millis
+            .or(last_timestamp_millis);
         sender
             .send(WorkerMessage::Progress(WorkerProgress {
                 worker_index: batch.batch_index,
-                processed_source_lines,
-                total_source_lines: batch.source_line_count,
                 processed_trunks: processed_trunks + 1,
                 total_trunks,
             }))
@@ -718,7 +769,9 @@ fn process_batch(
         .send(WorkerMessage::Completed(BatchResult {
             batch_index: batch.batch_index,
             temp_path,
-            source_line_count: batch.source_line_count,
+            total_record_count,
+            first_timestamp_millis,
+            last_timestamp_millis,
         }))
         .map_err(|error| format!("failed to report worker completion: {error}"))?;
     Ok(())
@@ -734,17 +787,20 @@ fn compress_planned_trunk(
     source_file
         .seek(SeekFrom::Start(trunk.source_byte_start))
         .map_err(|error| format!("failed to seek {}: {error}", source_path.display()))?;
-    let mut source_bytes = vec![0_u8; usize::try_from(trunk.source_byte_length).unwrap_or(usize::MAX)];
+    let mut source_bytes =
+        vec![0_u8; usize::try_from(trunk.source_byte_length).unwrap_or(usize::MAX)];
     source_file
         .read_exact(&mut source_bytes)
         .map_err(|error| format!("failed to read {}: {error}", source_path.display()))?;
 
     let mut reader = BufReader::new(Cursor::new(source_bytes));
     let mut line = String::new();
-    let mut line_number = trunk.source_line_start.saturating_sub(1);
+    let mut line_number = 0usize;
     let mut record_count = 0u16;
     let mut last_timestamp_millis = None;
     let mut raw_trunk_bytes = Vec::new();
+    let mut current_record = None;
+    let mut first_timestamp_millis = None;
 
     loop {
         line.clear();
@@ -758,29 +814,61 @@ fn compress_planned_trunk(
         trim_line_ending(&mut line);
 
         if line.trim().is_empty() {
+            if let Some(record) = current_record.as_mut() {
+                append_continuation_line(record, "");
+            }
             continue;
         }
 
-        let record = parse_line(source_path, usize::try_from(line_number).unwrap_or(usize::MAX), &line)?;
-        if let Some(last_timestamp) = last_timestamp_millis {
-            if record.timestamp_millis < last_timestamp {
-                return Err("records must be appended in timestamp order".to_string());
+        if is_record_start_line(&line) {
+            if let Some(record) = current_record.take() {
+                if first_timestamp_millis.is_none() {
+                    first_timestamp_millis = Some(record.timestamp_millis);
+                }
+                record_count = write_trunk_record(
+                    source_path,
+                    &mut raw_trunk_bytes,
+                    base_timestamp_millis,
+                    &mut last_timestamp_millis,
+                    record_count,
+                    record,
+                )?;
             }
+            current_record = Some(parse_line(
+                source_path,
+                usize::try_from(line_number).unwrap_or(usize::MAX),
+                &line,
+            )?);
+            continue;
         }
-        write_raw_log_line(&mut raw_trunk_bytes, &record, base_timestamp_millis)?;
-        last_timestamp_millis = Some(record.timestamp_millis);
-        record_count = record_count.saturating_add(1);
+
+        let Some(record) = current_record.as_mut() else {
+            return Err(invalid_log_line_error(
+                source_path,
+                usize::try_from(line_number).unwrap_or(usize::MAX),
+            ));
+        };
+        append_continuation_line(record, &line);
     }
 
-    if record_count != trunk.record_count {
-        return Err(format!(
-            "planned trunk {} expected {} records but worker parsed {}",
-            trunk.trunk_index, trunk.record_count, record_count
-        ));
+    if let Some(record) = current_record.take() {
+        if first_timestamp_millis.is_none() {
+            first_timestamp_millis = Some(record.timestamp_millis);
+        }
+        record_count = write_trunk_record(
+            source_path,
+            &mut raw_trunk_bytes,
+            base_timestamp_millis,
+            &mut last_timestamp_millis,
+            record_count,
+            record,
+        )?;
     }
 
     Ok(CompressedTrunk {
         line_count: record_count,
+        first_timestamp_millis,
+        last_timestamp_millis,
         compressed_bytes: compression_algorithm.compress(&raw_trunk_bytes)?,
     })
 }
@@ -798,8 +886,8 @@ fn merge_batch_results(
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
-    let mut target =
-        File::create(tinylog_path).map_err(|error| format!("failed to create {}: {error}", tinylog_path.display()))?;
+    let mut target = File::create(tinylog_path)
+        .map_err(|error| format!("failed to create {}: {error}", tinylog_path.display()))?;
     write_header(
         &mut target,
         compression_algorithm,
@@ -810,13 +898,53 @@ fn merge_batch_results(
     )?;
 
     for batch_result in batch_results {
-        let mut batch_file = File::open(&batch_result.temp_path)
-            .map_err(|error| format!("failed to read {}: {error}", batch_result.temp_path.display()))?;
-        io::copy(&mut batch_file, &mut target)
-            .map_err(|error| format!("failed to merge {}: {error}", batch_result.temp_path.display()))?;
+        let mut batch_file = File::open(&batch_result.temp_path).map_err(|error| {
+            format!(
+                "failed to read {}: {error}",
+                batch_result.temp_path.display()
+            )
+        })?;
+        io::copy(&mut batch_file, &mut target).map_err(|error| {
+            format!(
+                "failed to merge {}: {error}",
+                batch_result.temp_path.display()
+            )
+        })?;
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchMergeMetadata {
+    total_record_count: u64,
+    first_timestamp_millis: Option<u64>,
+}
+
+fn summarize_batch_results(batch_results: &[BatchResult]) -> Result<BatchMergeMetadata, String> {
+    let mut total_record_count = 0u64;
+    let mut first_timestamp_millis = None;
+    let mut last_timestamp_millis = None;
+
+    for batch_result in batch_results {
+        if let Some(first_timestamp) = batch_result.first_timestamp_millis {
+            if let Some(last_timestamp) = last_timestamp_millis {
+                if first_timestamp < last_timestamp {
+                    return Err("records must be appended in timestamp order".to_string());
+                }
+            }
+            if first_timestamp_millis.is_none() {
+                first_timestamp_millis = Some(first_timestamp);
+            }
+        }
+        total_record_count = total_record_count.saturating_add(batch_result.total_record_count);
+        last_timestamp_millis = batch_result.last_timestamp_millis.or(last_timestamp_millis);
+    }
+
+    Ok(BatchMergeMetadata {
+        total_record_count,
+        first_timestamp_millis,
+    })
 }
 
 fn write_u24(target: &mut impl Write, value: u32) -> Result<(), String> {
@@ -836,7 +964,11 @@ fn line_byte_size(record: &LogRecord) -> usize {
     LINE_HEADER_BYTES + record.message.len()
 }
 
-fn write_raw_log_line(target: &mut Vec<u8>, record: &LogRecord, base_timestamp_millis: u64) -> Result<(), String> {
+fn write_raw_log_line(
+    target: &mut Vec<u8>,
+    record: &LogRecord,
+    base_timestamp_millis: u64,
+) -> Result<(), String> {
     let offset_millis = record
         .timestamp_millis
         .checked_sub(base_timestamp_millis)
@@ -869,7 +1001,11 @@ struct TinylogWriter {
 }
 
 impl TinylogWriter {
-    fn new(path: &Path, compression_algorithm: CompressionAlgorithm, trunk_size_kb: u16) -> Result<Self, String> {
+    fn new(
+        path: &Path,
+        compression_algorithm: CompressionAlgorithm,
+        trunk_size_kb: u16,
+    ) -> Result<Self, String> {
         validate_trunk_size_kb(trunk_size_kb)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -882,7 +1018,14 @@ impl TinylogWriter {
             .truncate(true)
             .open(path)
             .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
-        write_header(&mut main_file, compression_algorithm, trunk_size_kb, 0, 0, 0)?;
+        write_header(
+            &mut main_file,
+            compression_algorithm,
+            trunk_size_kb,
+            0,
+            0,
+            0,
+        )?;
 
         Ok(Self {
             main_file,
@@ -907,11 +1050,15 @@ impl TinylogWriter {
         }
 
         let line_bytes = line_byte_size(&record);
-        if self.current_trunk_line_count > 0 && self.current_trunk_bytes + line_bytes > self.trunk_size_bytes {
+        if self.current_trunk_line_count > 0
+            && self.current_trunk_bytes + line_bytes > self.trunk_size_bytes
+        {
             self.flush_current_trunk()?;
         }
 
-        let base_timestamp_millis = self.base_timestamp_millis.unwrap_or(record.timestamp_millis);
+        let base_timestamp_millis = self
+            .base_timestamp_millis
+            .unwrap_or(record.timestamp_millis);
         write_raw_log_line(&mut self.raw_trunk_buffer, &record, base_timestamp_millis)?;
         self.current_trunk_bytes += line_bytes;
         self.current_trunk_line_count += 1;
@@ -1009,31 +1156,53 @@ fn convert_plaintext_log_serial(
     compression_algorithm: CompressionAlgorithm,
     trunk_size_kb: u16,
     progress_reporter: &mut ProgressReporter<impl Write>,
-    total_lines: u64,
+    source_size_bytes: u64,
 ) -> Result<(), String> {
     let mut reader = open_buffered_reader(plain_text_log_path)?;
     let mut writer = TinylogWriter::new(tinylog_path, compression_algorithm, trunk_size_kb)?;
     let mut line = String::new();
     let mut line_number = 0usize;
-    let mut processed_lines = 0u64;
+    let mut processed_bytes = 0u64;
+    let mut current_record = None;
 
     loop {
         line.clear();
-        let bytes_read = reader
-            .read_line(&mut line)
-            .map_err(|error| format!("failed to read {}: {error}", plain_text_log_path.display()))?;
+        let bytes_read = reader.read_line(&mut line).map_err(|error| {
+            format!("failed to read {}: {error}", plain_text_log_path.display())
+        })?;
         if bytes_read == 0 {
             break;
         }
         trim_line_ending(&mut line);
         line_number += 1;
-        processed_lines += 1;
+        processed_bytes = processed_bytes.saturating_add(bytes_read as u64);
 
-        if !line.trim().is_empty() {
-            let record = parse_line(plain_text_log_path, line_number, &line)?;
-            writer.append(record)?;
+        if line.trim().is_empty() {
+            if let Some(record) = current_record.as_mut() {
+                append_continuation_line(record, "");
+            }
+            progress_reporter.maybe_render(processed_bytes, source_size_bytes)?;
+            continue;
         }
-        progress_reporter.maybe_render(processed_lines, total_lines)?;
+
+        if is_record_start_line(&line) {
+            if let Some(record) = current_record.take() {
+                writer.append(record)?;
+            }
+            current_record = Some(parse_line(plain_text_log_path, line_number, &line)?);
+            progress_reporter.maybe_render(processed_bytes, source_size_bytes)?;
+            continue;
+        }
+
+        let Some(record) = current_record.as_mut() else {
+            return Err(invalid_log_line_error(plain_text_log_path, line_number));
+        };
+        append_continuation_line(record, &line);
+        progress_reporter.maybe_render(processed_bytes, source_size_bytes)?;
+    }
+
+    if let Some(record) = current_record.take() {
+        writer.append(record)?;
     }
 
     writer.close()
@@ -1130,11 +1299,6 @@ impl<W: Write> ProgressReporter<W> {
         }
     }
 
-    fn write_counting_message(&mut self, path: &Path) -> Result<(), String> {
-        writeln!(self.output, "counting total lines in {}", path.display())
-            .map_err(|error| format!("failed to write progress output: {error}"))
-    }
-
     fn write_phase_message(&mut self, message: &str) -> Result<(), String> {
         writeln!(self.output, "{message}")
             .map_err(|error| format!("failed to write progress output: {error}"))
@@ -1186,7 +1350,11 @@ impl<W: Write> ProgressReporter<W> {
         Ok(())
     }
 
-    fn maybe_render_indexing(&mut self, processed_lines: u64, total_lines: u64) -> Result<(), String> {
+    fn maybe_render_indexing(
+        &mut self,
+        processed_lines: u64,
+        total_lines: u64,
+    ) -> Result<(), String> {
         if processed_lines == total_lines || processed_lines >= self.next_render_threshold {
             self.render_indexing(processed_lines, total_lines)?;
             while self.next_render_threshold <= processed_lines {
@@ -1260,8 +1428,9 @@ mod tests {
 
     use super::{
         build_conversion_plan, build_worker_batches, convert_plaintext_log, format_duration,
-        format_size, parse_level_and_message, should_use_parallel_conversion, validate_tinylog_path,
-        CompressionAlgorithm, ConversionSummary, ProgressReporter, PARALLEL_CONVERSION_THRESHOLD_BYTES,
+        format_size, parse_level_and_message, should_use_parallel_conversion,
+        validate_tinylog_path, CompressionAlgorithm, ConversionSummary, ProgressReporter,
+        PARALLEL_CONVERSION_THRESHOLD_BYTES,
     };
 
     #[test]
@@ -1316,13 +1485,16 @@ mod tests {
             ]
         );
         let progress_text = String::from_utf8(progress_output).expect("utf8 progress");
+        let source_size_bytes = fs::metadata(&input_path).expect("input metadata").len();
         assert!(progress_text.contains("using serial conversion mode"));
-        assert!(progress_text.contains("progress: 0/3"));
-        assert!(progress_text.contains("progress: 3/3"));
+        assert!(progress_text.contains(&format!("progress: 0/{source_size_bytes}")));
+        assert!(progress_text.contains(&format!(
+            "progress: {source_size_bytes}/{source_size_bytes}"
+        )));
         assert_eq!(
             summary,
             ConversionSummary {
-                source_size_bytes: fs::metadata(&input_path).expect("input metadata").len(),
+                source_size_bytes,
                 output_size_bytes: fs::metadata(&output_path).expect("output metadata").len(),
             }
         );
@@ -1347,13 +1519,43 @@ mod tests {
         let mut progress_output = Vec::new();
         let mut progress_reporter = ProgressReporter::new(&mut progress_output);
 
-        let plan = build_conversion_plan(&input_path, 1, &mut progress_reporter, 4).expect("build plan");
+        let source_size_bytes = fs::metadata(&input_path).expect("input metadata").len();
+        let plan = build_conversion_plan(&input_path, 1, &mut progress_reporter, source_size_bytes)
+            .expect("build plan");
 
-        assert_eq!(plan.total_records, 3);
+        assert_eq!(plan.base_timestamp_millis, Some(1_777_672_860_253));
         assert_eq!(plan.trunks.len(), 1);
-        assert_eq!(plan.trunks[0].record_count, 3);
-        assert_eq!(plan.trunks[0].source_line_start, 1);
-        assert_eq!(plan.trunks[0].source_line_count, 4);
+        assert_eq!(plan.trunks[0].source_byte_start, 0);
+        assert_eq!(plan.trunks[0].source_byte_length, source_size_bytes);
+
+        fs::remove_file(input_path).ok();
+    }
+
+    #[test]
+    fn build_conversion_plan_aligns_boundary_to_next_record_start() {
+        let input_path = unique_temp_path("planned-multiline.log");
+        let mut input = String::from("2026-05-01 22:01:00,253 [INFO] alpha\n");
+        for index in 0..80 {
+            input.push_str(&format!(
+                "stack frame {index:02} detail detail detail detail detail detail\n"
+            ));
+        }
+        input.push_str("2026-05-01 22:01:01,253 [WARN] omega\n");
+        fs::write(&input_path, input).expect("write planning input");
+
+        let source_size_bytes = fs::metadata(&input_path).expect("input metadata").len();
+        let mut progress_output = Vec::new();
+        let mut progress_reporter = ProgressReporter::new(&mut progress_output);
+        let plan = build_conversion_plan(&input_path, 1, &mut progress_reporter, source_size_bytes)
+            .expect("build plan");
+
+        assert_eq!(plan.base_timestamp_millis, Some(1_777_672_860_253));
+        assert_eq!(plan.trunks.len(), 2);
+        assert!(plan.trunks[0].source_byte_length > 1024);
+        assert_eq!(
+            plan.trunks[1].source_byte_start,
+            plan.trunks[0].source_byte_start + plan.trunks[0].source_byte_length
+        );
 
         fs::remove_file(input_path).ok();
     }
@@ -1361,29 +1563,39 @@ mod tests {
     #[test]
     fn build_worker_batches_preserves_contiguous_trunk_order() {
         let trunks = vec![
-            planned_trunk(0, 0, 10, 1, 2, 1),
-            planned_trunk(1, 10, 10, 3, 2, 1),
-            planned_trunk(2, 20, 10, 5, 2, 1),
-            planned_trunk(3, 30, 10, 7, 2, 1),
-            planned_trunk(4, 40, 10, 9, 2, 1),
+            planned_trunk(0, 0, 10),
+            planned_trunk(1, 10, 10),
+            planned_trunk(2, 20, 10),
+            planned_trunk(3, 30, 10),
+            planned_trunk(4, 40, 10),
         ];
 
         let batches = build_worker_batches(&trunks, 2);
 
         assert_eq!(batches.len(), 2);
         assert_eq!(
-            batches[0].trunks.iter().map(|trunk| trunk.trunk_index).collect::<Vec<_>>(),
+            batches[0]
+                .trunks
+                .iter()
+                .map(|trunk| trunk.trunk_index)
+                .collect::<Vec<_>>(),
             vec![0, 1, 2]
         );
         assert_eq!(
-            batches[1].trunks.iter().map(|trunk| trunk.trunk_index).collect::<Vec<_>>(),
+            batches[1]
+                .trunks
+                .iter()
+                .map(|trunk| trunk.trunk_index)
+                .collect::<Vec<_>>(),
             vec![3, 4]
         );
     }
 
     #[test]
     fn should_use_parallel_conversion_only_above_threshold() {
-        assert!(!should_use_parallel_conversion(PARALLEL_CONVERSION_THRESHOLD_BYTES));
+        assert!(!should_use_parallel_conversion(
+            PARALLEL_CONVERSION_THRESHOLD_BYTES
+        ));
         assert!(should_use_parallel_conversion(
             PARALLEL_CONVERSION_THRESHOLD_BYTES.saturating_add(1)
         ));
@@ -1418,21 +1630,55 @@ mod tests {
         assert_eq!(format_duration(Duration::from_millis(1_250)), "1.250s");
     }
 
+    #[test]
+    fn convert_plaintext_log_preserves_multiline_records() {
+        let input_path = unique_temp_path("plain-multiline.log");
+        let output_path = unique_temp_path("plain-multiline.tog");
+        fs::write(
+            &input_path,
+            concat!(
+                "2026-05-01 22:01:00,253 [ERROR] request failed\n",
+                "java.lang.IllegalStateException: boom\n",
+                "\tat example.Service.handle(Service.java:42)\n",
+                "2026-05-01 22:01:00,278 [INFO] recovered\n"
+            ),
+        )
+        .expect("write multiline input log");
+        let mut progress_output = Vec::new();
+        let mut progress_reporter = ProgressReporter::new(&mut progress_output);
+
+        convert_plaintext_log(
+            &input_path,
+            &output_path,
+            CompressionAlgorithm::Gzip,
+            512,
+            &mut progress_reporter,
+        )
+        .expect("convert multiline log");
+
+        let bytes = fs::read(&output_path).expect("read output file");
+        let entries = parse_bytes(&bytes).expect("parse output file");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].content,
+            "request failed\njava.lang.IllegalStateException: boom\n\tat example.Service.handle(Service.java:42)"
+        );
+        assert_eq!(entries[1].content, "recovered");
+
+        fs::remove_file(input_path).ok();
+        fs::remove_file(output_path).ok();
+    }
+
     fn planned_trunk(
         trunk_index: usize,
         source_byte_start: u64,
         source_byte_length: u64,
-        source_line_start: u64,
-        source_line_count: u64,
-        record_count: u16,
     ) -> super::PlannedTrunk {
         super::PlannedTrunk {
             trunk_index,
             source_byte_start,
             source_byte_length,
-            source_line_start,
-            source_line_count,
-            record_count,
         }
     }
 

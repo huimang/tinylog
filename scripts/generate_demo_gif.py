@@ -166,19 +166,17 @@ def build_frames() -> list[FrameSpec]:
 
     conversion_lines = terminal_lines(
         "$ ./scripts/tinylog-convert.sh logs/normal-10g.log",
-        "counting total lines in logs/normal-10g.log",
         "using parallel conversion mode for inputs larger than 100.00 MiB",
         "building trunk index and preparing worker assignments for logs/normal-10g.log",
-        "indexing: 0/49026105 (0.00%)",
-        "indexing: 49026105/49026105 (100.00%)",
-        "compressing 18334 trunks with 16 workers",
-        "writing: 1: 0% 2: 0% 3: 0% 4: 0%",
-        "writing: 1: 10% 2: 20% 3: 24% 4: 10%",
+        "indexing: 10737418317/10737418317 (100.00%)",
+        "compressing 20479 trunks with 16 workers",
+        "writing: 1: 100% 2: 100% 3: 100% 4: 100% 5: 100% 6: 100% 7: 100% 8: 100%",
+        "writing: 9: 100% 10: 100% 11: 100% 12: 100% 13: 100% 14: 100% 15: 100% 16: 100%",
         "converted logs/normal-10g.log to logs/normal-10g.tog using gzip",
         "source size: 10.00 GiB",
-        "output size: 234.19 MiB",
-        "compression ratio: 2.29%",
-        "elapsed: 195.950s",
+        "output size: 235.84 MiB",
+        "compression ratio: 2.30%",
+        "elapsed: 34.411s",
     )
     preview_lines = terminal_lines(
         "$ ./scripts/tinylog-convert.sh logs/normal-10g.log",

@@ -94,10 +94,9 @@ scripts/tinylog-convert.sh normal.log
 Expected output:
 
 ```text
-counting total lines in normal.log
 using serial conversion mode for inputs up to 100.00 MiB
-progress: 0/3 (0.00%)
-progress: 3/3 (100.00%)
+progress: 0/120 (0.00%)
+progress: 120/120 (100.00%)
 converted normal.log to normal.tog using gzip
 source size: 120 (120 B)
 output size: 111 (111 B)
@@ -105,13 +104,12 @@ compression ratio: 92.50%
 elapsed: 4ms
 ```
 
-For large inputs above `100 MiB`, the converter switches to parallel mode and prints one live horizontal worker line based on **completed trunks / assigned trunks**, for example:
+For large inputs above `100 MiB`, the converter starts indexing immediately by byte range and prints one live horizontal worker line based on **completed trunks / assigned trunks**, for example:
 
 ```text
-using parallel conversion mode for inputs larger than 100.00 MiB
 building trunk index and preparing worker assignments for huge.log
-indexing: 0/1015076 (0.00%)
-indexing: 1015076/1015076 (100.00%)
+indexing: 0/10737418317 (0.00%)
+indexing: 10737418317/10737418317 (100.00%)
 compressing 157 trunks with 16 workers
 writing: 1: 0% 2: 0% 3: 0% 4: 0%
 writing: 1: 10% 2: 20% 3: 24% 4: 10%
