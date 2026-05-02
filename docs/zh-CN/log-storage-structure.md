@@ -2,7 +2,7 @@
 
 > 状态：**已实现的原型**
 >
-> 本文档描述当前已经落地的 trunk-based `.tog` 原型，以及 Java 写入端和 Rust viewer 的实际行为。
+> 本文档描述当前已经落地的 trunk-based `.tog` 原型，以及 Rust converter 和 Rust viewer 的实际行为。
 
 ## 设计目标
 
@@ -21,7 +21,7 @@
 - **存储单元**：`trunk`
 - **默认 trunk 大小**：`512 KB`
 - **基准时间**：文件 header 中保存一个全局 UTC 基准时间戳
-- **写入路径**：先把原始日志行写入 `log-buffer-{trunkIndex}.tmp`，当缓冲达到阈值后，对整个 trunk 做压缩，再追加到主 `.tog` 文件
+- **写入路径**：Rust converter 会直接从源日志构建 trunk 字节区间；大文件下由多个 worker 并行压缩连续 trunk 批次，最后由 master 顺序合并到最终 `.tog` 文件
 
 ## 文件 Header 结构
 
@@ -144,21 +144,7 @@
 
 ## 写入流程
 
-写入流程会为每个 trunk 使用一个临时原始缓冲文件。
-
-### 缓冲文件命名
-
-```text
-log-buffer-{trunkIndex}.tmp
-```
-
-例如：
-
-```text
-log-buffer-0.tmp
-log-buffer-1.tmp
-log-buffer-2.tmp
-```
+当前写入流程由 Rust converter 实现。小文件保持串行转换，大文件切换到 master/worker 并行转换。
 
 ### 写入流程图
 
@@ -173,71 +159,47 @@ log-buffer-2.tmp
 +-------------------------+
             |
             v
-+-------------------------+
-| 打开 log-buffer-0.tmp   |
-+-------------------------+
-            |
-            v
 +----------------------------------------------+
-| 追加原始日志行                                |
-| offsetMillis + level + contentLength + content |
+| 对于 > 100 MiB 的输入，先按 trunkSize 跳转， |
+| 再对齐到下一个记录起点                       |
 +----------------------------------------------+
             |
             v
-+-------------------------------+
-| buffer size >= trunkSize ?    |
-+-------------------------------+
-      | 是                           | 否
-      v                              |
-+-------------------------+          |
-| 读取整个缓冲文件内容     |          |
-+-------------------------+          |
-            |                       |
-            v                       |
-+----------------------------------+ |
-| 用 gzip 压缩整个 trunk           | |
-+----------------------------------+ |
-            |                       |
-            v                       |
++----------------------------------------------+
+| 将连续 trunk 区间分配给多个 worker           |
++----------------------------------------------+
+            |
+            v
++----------------------------------------------+
+| worker 读取规划好的 trunk 字节区间           |
+| 解析记录和 multiline continuation            |
+| 生成 offsetMillis / level / contentLength    |
+| 并压缩整个 trunk                             |
++----------------------------------------------+
+            |
+            v
 +---------------------------------------------------+
-| 向主文件追加 trunkLogLineCount + compressedContentLength + 数据 |
+| worker 把 trunkLogLineCount、压缩内容以及元信息回传 |
 +---------------------------------------------------+
             |
             v
 +----------------------------------+
-| 更新 totalLogLineCount / trunkCount |
+| master 顺序合并结果并回写 header |
 +----------------------------------+
-            |
-            v
-+-------------------------------+
-| 删除当前缓冲文件              |
-+-------------------------------+
-            |
-            v
-+--------------------------------------+
-| 打开下一个 log-buffer-{trunkIndex}.tmp |
-+--------------------------------------+
-            |
-            +---------------------------> 回到“追加原始日志行”
 ```
 
 ### 写入步骤
 
 1. 创建主 `.tog` 文件并初始化 header
-2. 创建 `log-buffer-0.tmp`
-3. 每来一条日志：
-   1. 解析明文日志时间
-   2. 计算 `offsetMillis = lineTimestampUtcMillis - baseTimestampUtcMillis`
-   3. 向当前缓冲文件追加 `[offsetMillis:4][level:1][contentLength:4][content]`
-4. 当缓冲文件达到 `trunkSizeKb` 阈值时：
-   1. 读取整个缓冲文件原始内容
-   2. 使用 header 指定的压缩算法压缩整个 trunk
-   3. 按 trunk 格式追加到主 `.tog`
-   4. 更新 `totalLogLineCount`
-   5. 更新 `trunkCount`
-   6. 删除旧缓冲文件
-   7. 开启下一个缓冲文件
-5. 当写入结束时，如果还有未落盘的非空缓冲，也要作为最后一个 trunk 刷入主文件
+2. 对于不超过 `100 MiB` 的输入，直接在单进程串行解析并刷出 trunk
+3. 对于更大的输入：
+   1. 按配置的 trunk 字节大小向前跳转
+   2. 把每个边界对齐到下一个记录起点（`\n` 后接时间戳形态前缀）
+   3. 用这些字节区间作为 trunk 规划结果
+   4. 把连续 trunk 区间分配给 worker
+4. 每个 worker 读取自己负责的源字节区间；遇到带时间戳的行就开始新记录，后续非时间戳行则并入上一条记录，作为 multiline continuation
+5. worker 生成 `[offsetMillis:4][level:1][contentLength:4][content]`，压缩整个 trunk，并把记录数与时间戳元信息回传给 master
+6. master 按顺序合并 worker 输出，并最终写回 `totalLogLineCount` 和 `trunkCount`
 
 ## 读取与浏览流程
 
@@ -320,7 +282,7 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 影响如下：
 
 1. 旧版 `.tog` 文件需要重新转换
-2. Java writer/reader 和 Rust converter/viewer 工具需要一起切换
+2. 任何 writer/reader 实现都必须一起切换；当前已经落地的是 Rust converter + Rust viewer 这一套流程
 3. 测试需要覆盖：
    - 版本号写入与解析
    - trunk 刷盘逻辑
@@ -337,4 +299,4 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 3. trunk 内每行格式固定为：`[offsetMillis:4][level:1][contentLength:4][content]`
 4. trunk 格式固定为：`[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
 5. 默认压缩算法为 `gzip`
-6. 缓冲文件命名固定为：`log-buffer-{trunkIndex}.tmp`
+6. 大文件索引按字节范围进行、边界对齐到记录起点，记录数统计放到 worker 压缩阶段完成

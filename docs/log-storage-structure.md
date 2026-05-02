@@ -2,7 +2,7 @@
 
 > Status: **implemented prototype**
 >
-> This document describes the current trunk-based `.tog` prototype used by the Java writer and Rust viewer.
+> This document describes the current trunk-based `.tog` prototype used by the Rust converter and Rust viewer.
 
 ## Purpose
 
@@ -21,7 +21,7 @@ Goals:
 - **Storage unit**: `trunk`
 - **Default trunk size**: `512 KB`
 - **Base timestamp**: one file-level UTC timestamp in the header
-- **Write path**: write raw lines into `log-buffer-{trunkIndex}.tmp`, compress the whole trunk when the buffer reaches the configured threshold, then append the compressed trunk to the main `.tog` file
+- **Write path**: the Rust converter builds trunk byte ranges directly from the source log, lets workers compress contiguous trunk batches in parallel for large inputs, and merges the worker outputs into the final `.tog` file
 
 ## File Header
 
@@ -144,21 +144,7 @@ Or expanded:
 
 ## Write Workflow
 
-The write workflow uses a temporary raw buffer file for each trunk.
-
-### Buffer File Naming
-
-```text
-log-buffer-{trunkIndex}.tmp
-```
-
-Examples:
-
-```text
-log-buffer-0.tmp
-log-buffer-1.tmp
-log-buffer-2.tmp
-```
+The current write workflow is implemented by the Rust converter. Small inputs stay serial, while larger inputs switch to a master/worker conversion pipeline.
 
 ### Write Flow Diagram
 
@@ -173,71 +159,50 @@ log-buffer-2.tmp
 +-------------------------+
             |
             v
-+-------------------------+
-| Open log-buffer-0.tmp   |
-+-------------------------+
-            |
-            v
 +----------------------------------------------+
-| Append raw line                              |
-| offsetMillis + level + contentLength + content |
+| For inputs > 100 MiB, build trunk boundaries |
+| by jumping near trunkSize and aligning to    |
+| the next record-start marker                 |
 +----------------------------------------------+
             |
             v
-+-------------------------------+
-| buffer size >= trunkSize ?    |
-+-------------------------------+
-      | yes                          | no
-      v                              |
-+-------------------------+          |
-| Read raw buffer bytes   |          |
-+-------------------------+          |
-            |                       |
-            v                       |
-+----------------------------------+ |
-| Compress whole trunk with gzip   | |
-+----------------------------------+ |
-            |                       |
-            v                       |
++----------------------------------------------+
+| Assign contiguous trunk ranges to workers    |
++----------------------------------------------+
+            |
+            v
++----------------------------------------------+
+| Worker reads one planned trunk range         |
+| parses records / multiline continuations     |
+| writes offsetMillis + level + contentLength  |
+| and compresses the whole trunk               |
++----------------------------------------------+
+            |
+            v
 +------------------------------------------------------+
-| Append trunkLogLineCount + compressedContentLength + payload |
+| Worker emits trunkLogLineCount + compressed payload  |
+| plus trunk metadata back to the master               |
 +------------------------------------------------------+
             |
             v
 +-----------------------------------+
-| Update totalLogLineCount / trunkCount |
+| Master merges worker outputs      |
+| and finalizes header counters     |
 +-----------------------------------+
-            |
-            v
-+-------------------------------+
-| Delete current buffer file    |
-+-------------------------------+
-            |
-            v
-+--------------------------------------+
-| Open next log-buffer-{trunkIndex}.tmp|
-+--------------------------------------+
-            |
-            +---------------------------> back to append raw line
 ```
 
 ### Write Steps
 
 1. Create the main `.tog` file and initialize the header
-2. Create `log-buffer-0.tmp`
-3. For each incoming log line:
-   1. parse the plaintext timestamp
-   2. compute `offsetMillis = lineTimestampUtcMillis - baseTimestampUtcMillis`
-   3. append `[offsetMillis:4][level:1][contentLength:4][content]` to the current buffer file
-4. When the buffer file reaches the configured `trunkSizeKb` threshold:
-   1. read the entire raw buffer
-   2. compress the whole buffer using the selected header algorithm
-   3. append one trunk to the main `.tog`
-   4. update `totalLogLineCount`
-   5. update `trunkCount`
-   6. remove the old buffer file
-   7. start the next buffer file
-5. When writing ends, flush the final non-empty buffer as the last trunk
+2. For inputs up to `100 MiB`, parse records serially and flush trunks directly from the converter process
+3. For larger inputs:
+   1. jump forward by the configured trunk size in bytes
+   2. align each boundary to the next record-start marker (`newline + timestamp-like prefix`)
+   3. use the resulting byte ranges as planned trunks
+   4. assign consecutive trunk ranges to workers
+4. Each worker reads its planned source bytes, parses the first timestamped line as a new record, and appends any following non-timestamp lines to that record as multiline continuation content
+5. Each worker encodes `[offsetMillis:4][level:1][contentLength:4][content]`, compresses the whole trunk, and reports record counts plus timestamp metadata back to the master
+6. The master merges worker outputs in order and writes the final `totalLogLineCount` and `trunkCount` values into the header
 
 ## Read and Browse Workflow
 
@@ -320,7 +285,7 @@ This redesign is **not backward compatible** with the current prototype layout.
 Implications:
 
 1. Existing `.tog` files produced by the old format will need reconversion
-2. Java writer/reader and the Rust converter/viewer tools must switch together
+2. Any writer/reader implementation must switch together; the current implemented workflow is the Rust converter plus Rust viewer
 3. Tests must be updated to cover:
    - version byte parsing
    - trunk flushing
@@ -337,4 +302,4 @@ The current prototype contract is:
 3. Each line inside a trunk is `[offsetMillis:4][level:1][contentLength:4][content]`
 4. Each trunk is `[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
 5. Default compression is `gzip`
-6. Buffer files use `log-buffer-{trunkIndex}.tmp`
+6. Large-input indexing is byte-based, aligns boundaries to record starts, and leaves record counting to workers during compression
