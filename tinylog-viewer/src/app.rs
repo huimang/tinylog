@@ -73,8 +73,8 @@ impl ViewerApplication {
                 }
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('j') | KeyCode::Down => session.move_down(),
-                    KeyCode::Char('k') | KeyCode::Up => session.move_up(),
+                    KeyCode::Char('j') | KeyCode::Down => session.move_down(usize::from(height)),
+                    KeyCode::Char('k') | KeyCode::Up => session.move_up(usize::from(height)),
                     KeyCode::Enter => session.quarter_page_down(usize::from(height)),
                     KeyCode::Char('d') if key.modifiers.is_empty() => session.page_down(usize::from(height)),
                     KeyCode::Char('u') if key.modifiers.is_empty() => session.page_up(usize::from(height)),
@@ -94,7 +94,7 @@ impl ViewerApplication {
     /// Draws the current page to the terminal.
     fn render(
         &self,
-        session: &InteractiveViewerSession,
+        session: &mut InteractiveViewerSession,
         height: usize,
         width: usize,
         stdout: &mut io::Stdout,
@@ -147,7 +147,7 @@ impl ViewerApplication {
         execute!(stdout, cursor::MoveTo((line_number_width + 3) as u16, row))
             .map_err(|error| format!("failed to move to content pane: {error}"))?;
         if is_current {
-            execute!(stdout, SetBackgroundColor(Color::Rgb { r: 13, g: 13, b: 13 }))
+            execute!(stdout, SetBackgroundColor(Color::Rgb { r: 12, g: 12, b: 12 }))
                 .map_err(|error| format!("failed to set current-row background: {error}"))?;
             write!(stdout, "{content:<width$}", width = content_width)
                 .map_err(|error| format!("failed to write highlighted content pane: {error}"))?;
