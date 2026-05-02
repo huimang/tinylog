@@ -4,6 +4,10 @@
   <img src="assets/tinylog-logo.svg" alt="TinyLog logo" width="320" />
 </p>
 
+<p align="center">
+  <img src="assets/tinylog-demo.gif" alt="TinyLog terminal demo" width="900" />
+</p>
+
 [Chinese README](README.zh-CN.md)
 
 `TinyLog` is a project scaffold for **high-density log storage** and **low-memory log access**.
@@ -19,7 +23,7 @@ Traditional logs are usually stored as plaintext. That creates two systemic issu
 The project is initialized around two product surfaces:
 
 1. **Java SDK** for application integration, with business-facing logging APIs similar in role to `slf4j`.
-2. **Rust viewer** for converting plaintext logs into proprietary TinyLog files, then opening and navigating them with a `vim`-like workflow for browsing, searching, and positioning.
+2. **Rust tools** for converting plaintext logs into proprietary TinyLog files and browsing them with a `vim`-like workflow for searching and positioning.
 
 ## Modules
 
@@ -27,7 +31,9 @@ The project is initialized around two product surfaces:
 | --- | --- |
 | `tinylog-core` | Core log domain model, codec abstractions, and reader/writer contracts |
 | `tinylog-sdk` | Business-facing Java logging API, logger factories, and SLF4J 2.0.17 bridge support |
-| `tinylog-viewer` | Rust CLI scaffold for converting plaintext logs to `.tog` and browsing proprietary TinyLog files |
+| `tinylog-rust-common` | Shared Rust TinyLog format and protobuf support |
+| `tinylog-converter` | Rust CLI for converting plaintext logs into `.tog` files |
+| `tinylog-viewer` | Rust CLI for interactive TinyLog browsing |
 
 ## Collaboration Guidelines
 
@@ -38,9 +44,11 @@ Repository collaboration rules, engineering conventions, and commit conventions 
 - **Java namespace**: `com.huimang.tinylog`
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
 - **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration
-- **Rust viewer**: standalone Cargo project under `tinylog-viewer`, responsible for both `.tog` conversion and interactive browsing
-- **Storage redesign draft (EN)**: `docs/log-storage-structure.md`
-- **Storage redesign draft (ZH-CN)**: `docs/zh-CN/log-storage-structure.md`
+- **Rust workspace**: split into `tinylog-rust-common`, `tinylog-converter`, and `tinylog-viewer`
+- **Shared contract**: protobuf schema in `tinylog-core/src/main/proto/tinylog/prototype.proto`
+- **Java protobuf generation notes**: `docs/protobuf-java-generation.md`
+- **Storage structure docs (EN)**: `docs/log-storage-structure.md`
+- **Storage structure docs (ZH-CN)**: `docs/zh-CN/log-storage-structure.md`
 
 ## Prototype File Format
 
@@ -59,7 +67,7 @@ The current prototype accepts plaintext log lines in this format:
 <yyyy-MM-dd HH:mm:ss,SSS> [LEVEL] <message>
 ```
 
-The converter interprets that timestamp text as a **UTC calendar value**, extracts the first `[LEVEL]` token into a dedicated one-byte field, removes that token from the stored message body, and the viewer reconstructs the line using the persisted level plus the UTC timestamp offset.
+The converter interprets that timestamp text as a **UTC calendar value**, extracts the first `[LEVEL]` token into a dedicated one-byte field, removes that token from the stored message body, and the viewer reconstructs the line using the persisted level plus the UTC timestamp offset. Inputs up to **100 MiB** use serial conversion to avoid scheduling overhead; larger inputs switch to a master/worker pipeline where the master plans trunk boundaries, workers compress contiguous trunk batches in parallel, and the master merges the worker outputs in order while reporting per-worker progress.
 
 ### 1. Create a sample `normal.log`
 
@@ -74,7 +82,7 @@ EOF
 ### 2. Convert `normal.log` to `normal.tog`
 
 ```bash
-cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- convert normal.log normal.tog
+cargo run --quiet --manifest-path tinylog-converter/Cargo.toml -- normal.log normal.tog
 ```
 
 Helper script:
@@ -87,6 +95,7 @@ Expected output:
 
 ```text
 counting total lines in normal.log
+using serial conversion mode for inputs up to 100.00 MiB
 progress: 0/3 (0.00%)
 progress: 3/3 (100.00%)
 converted normal.log to normal.tog using gzip
@@ -94,6 +103,18 @@ source size: 120 (120 B)
 output size: 111 (111 B)
 compression ratio: 92.50%
 elapsed: 4ms
+```
+
+For large inputs above `100 MiB`, the converter switches to parallel mode and prints one live horizontal worker line based on **completed trunks / assigned trunks**, for example:
+
+```text
+using parallel conversion mode for inputs larger than 100.00 MiB
+building trunk index and preparing worker assignments for huge.log
+indexing: 0/1015076 (0.00%)
+indexing: 1015076/1015076 (100.00%)
+compressing 157 trunks with 16 workers
+workers 1: 0% 2: 0% 3: 0% 4: 0%
+workers 1: 10% 2: 20% 3: 24% 4: 10%
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer
@@ -121,9 +142,11 @@ g               jump to top
 G               jump to bottom
 :N              jump to line N
 /keyword        search keyword by trunk and jump to the nearest result
-n               move to next cached search result
-p               move to previous cached search result
-Esc             clear active search and remove highlight
+:debug          filter one level (also :trace/:info/:warn/:error)
+:help           open the help popup
+n               move to next cached search result / continue trunk scan
+p               move to previous cached search result / continue trunk scan
+Esc             clear filter/search or close help
 q               quit
 ```
 
@@ -141,7 +164,7 @@ The viewer stays open like a lightweight vim-style browser. The display area is 
 ### 4. Re-run the automated converter test only
 
 ```bash
-cd tinylog-viewer && cargo test converter::tests::convert_plaintext_log_writes_parseable_tog
+cargo test -p tinylog-converter convert_plaintext_log_writes_parseable_tog
 ```
 
 ## Near-Term Roadmap

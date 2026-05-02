@@ -1,8 +1,8 @@
 # Tinylog 日志存储结构与 Trunk 流程设计
 
-> 状态：**待确认设计**
+> 状态：**已实现的原型**
 >
-> 本文档用于在实现之前，明确下一版 `.tog` 存储结构的设计方案。
+> 本文档描述当前已经落地的 trunk-based `.tog` 原型，以及 Java 写入端和 Rust viewer 的实际行为。
 
 ## 设计目标
 
@@ -97,6 +97,7 @@
 | 字段 | 长度 | 含义 |
 | --- | ---: | --- |
 | `offsetMillis` | 4 字节 | 相对 `baseTimestampUtcMillis` 的毫秒偏移 |
+| `level` | 1 字节 | 持久化日志级别标识 |
 | `contentLength` | 4 字节 | 当前日志内容字节长度 |
 | `content` | N 字节 | UTF-8 日志内容，不做行级压缩 |
 
@@ -293,14 +294,13 @@ log-buffer-2.tmp
 ### 读取步骤
 
 1. 读取固定 header
-2. 确定当前可见范围或查询范围
-3. 打开文件时先快速扫描全部 trunk 的位置和行数，并缓存在内存中
-4. 基于内存索引定位目标 trunk
-5. 只读取目标 trunk 的压缩内容
-6. 只解压该 trunk
-7. 解析 trunk 内部的原始日志行
-8. 基于文件级 UTC 基准时间恢复实际时间
-9. 返回需要展示或查询的日志记录
+2. 打开文件时先快速扫描全部 trunk 的位置和行数，并缓存在内存中
+3. 基于内存索引定位当前可见范围或查询范围
+4. 只读取目标 trunk 的压缩内容
+5. 只解压当前窗口、当前搜索步骤或当前过滤步骤所需的 trunk
+6. 解析 trunk 内部的原始日志行
+7. 基于文件级 UTC 基准时间恢复实际时间
+8. 返回需要展示或查询的日志记录
 
 ## Viewer 侧预期
 
@@ -309,6 +309,7 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 - 保留交互式导航方式
 - 不解压无关 trunk
 - 只解压当前可视窗口所需的 trunk 或 trunk 子集
+- 搜索和级别过滤采用按需继续的 trunk 扫描方式，而不是启动时一次性解压整文件
 
 也就是说，这次设计把解压粒度从**按行**改成了**按 trunk**。
 
@@ -319,7 +320,7 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 影响如下：
 
 1. 旧版 `.tog` 文件需要重新转换
-2. Java writer/reader 和 Rust viewer 需要一起切换
+2. Java writer/reader 和 Rust converter/viewer 工具需要一起切换
 3. 测试需要覆盖：
    - 版本号写入与解析
    - trunk 刷盘逻辑
@@ -327,13 +328,13 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
    - 最后一个未满 trunk 的刷盘
    - viewer 只解压目标 trunk 的行为
 
-## 实现前待确认项
+## 当前契约
 
-在开始实现前，请确认以下内容：
+当前原型契约如下：
 
 1. Header 顺序固定为：`version -> compression -> trunkSizeKb -> baseTimestampUtcMillis -> totalLogLineCount -> trunkCount`
 2. 所有 trunk 共用一个文件级 UTC 基准时间戳
 3. trunk 内每行格式固定为：`[offsetMillis:4][level:1][contentLength:4][content]`
 4. trunk 格式固定为：`[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
-5. 默认压缩算法改回 `gzip`
+5. 默认压缩算法为 `gzip`
 6. 缓冲文件命名固定为：`log-buffer-{trunkIndex}.tmp`

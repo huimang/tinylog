@@ -1,8 +1,8 @@
 # Tinylog Log Storage Structure and Trunk Workflow
 
-> Status: **design for review**
+> Status: **implemented prototype**
 >
-> This document defines the next `.tog` storage redesign before implementation.
+> This document describes the current trunk-based `.tog` prototype used by the Java writer and Rust viewer.
 
 ## Purpose
 
@@ -97,6 +97,7 @@ Before compression, a trunk contains raw log lines in sequence:
 | Field | Size | Meaning |
 | --- | ---: | --- |
 | `offsetMillis` | 4 bytes | Millisecond offset from `baseTimestampUtcMillis` |
+| `level` | 1 byte | Persisted log level identifier |
 | `contentLength` | 4 bytes | Length of the log content in bytes |
 | `content` | N bytes | UTF-8 log content, not compressed at line level |
 
@@ -293,14 +294,13 @@ The reader/viewer works against the header plus the appended trunk sequence.
 ### Read Steps
 
 1. Read the fixed header
-2. Determine the visible range or scan range
-3. Scan all trunk offsets plus line counts once and cache that index in memory
-4. Use the cached index to find the target trunk
-5. Read only the target trunk payload
-6. Decompress that trunk
-7. Parse raw lines inside the trunk
-8. Reconstruct each timestamp from the file-level base timestamp
-9. Return only the requested records to the caller or viewer
+2. Scan all trunk offsets plus line counts once and cache that index in memory at open time
+3. Use the cached index to resolve the visible range or requested scan range
+4. Read only the target trunk payloads
+5. Decompress only the trunks needed for the current window, search step, or filter step
+6. Parse raw lines inside those trunks
+7. Reconstruct each timestamp from the file-level base timestamp
+8. Return only the requested records to the caller or viewer
 
 ## Viewer Expectations
 
@@ -309,6 +309,7 @@ The Rust viewer should continue to behave like a lightweight vim-style browser:
 - keep the interactive navigation model
 - avoid decoding unrelated trunks
 - decode only the trunk or trunk subset needed for the current visible window
+- for search and level filtering, continue scanning trunks on demand instead of decoding the whole file up front
 
 This means the redesign changes the **decompression granularity** from **line-level** to **trunk-level**.
 
@@ -319,7 +320,7 @@ This redesign is **not backward compatible** with the current prototype layout.
 Implications:
 
 1. Existing `.tog` files produced by the old format will need reconversion
-2. Java writer/reader and Rust viewer must switch together
+2. Java writer/reader and the Rust converter/viewer tools must switch together
 3. Tests must be updated to cover:
    - version byte parsing
    - trunk flushing
@@ -327,13 +328,13 @@ Implications:
    - final partial trunk flushing
    - viewer-side trunk-only decoding
 
-## Open Review Targets
+## Current Contract
 
-Please confirm these points before implementation:
+The current prototype contract is:
 
 1. Header order: `version -> compression -> trunkSizeKb -> baseTimestampUtcMillis -> totalLogLineCount -> trunkCount`
 2. One file-level UTC base timestamp is shared by all trunks
 3. Each line inside a trunk is `[offsetMillis:4][level:1][contentLength:4][content]`
 4. Each trunk is `[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
-5. Default compression returns to `gzip`
+5. Default compression is `gzip`
 6. Buffer files use `log-buffer-{trunkIndex}.tmp`
