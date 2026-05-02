@@ -4,7 +4,7 @@
   <img src="assets/tinylog-logo.svg" alt="TinyLog logo" width="320" />
 </p>
 
-[中文版说明](README.zh-CN.md)
+[Chinese README](README.zh-CN.md)
 
 `TinyLog` is a project scaffold for **high-density log storage** and **low-memory log access**.
 It targets the two main pain points of traditional plaintext logging: excessive storage cost and expensive traversal of very large files.
@@ -44,50 +44,12 @@ Repository collaboration rules, engineering conventions, and commit conventions 
 
 ## Prototype File Format
 
-The current prototype uses a **trunk-based** binary layout in **big-endian** order.
+The current prototype uses a **trunk-based** `.tog` binary layout with whole-trunk compression, lightweight indexing, and low-memory windowed reads for interactive browsing.
 
-1. **Version**: 3 bytes, sourced from the Maven version tuple
-2. **Compression algorithm**: 2 bytes
-3. **Trunk size**: 2 bytes, stored in KB
-4. **Base timestamp**: 8 bytes, UTC milliseconds
-5. **Total log line count**: 8 bytes
-6. **Trunk count**: 3 bytes
-7. **File extension**: `.tog`
-8. Repeated for each completed trunk:
-   - **Trunk log line count**: 2 bytes
-   - **Compressed trunk length**: 4 bytes
-   - **Compressed trunk bytes**: the full raw trunk payload after whole-trunk compression
+The full storage structure, field definitions, and design rationale live in:
 
-In other words:
-
-```text
-[version:3][compression:2][trunkSizeKb:2][baseTimestampUtcMillis:8][totalLogLineCount:8][trunkCount:3]
-[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
-[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
-...
-```
-
-Current prototype notes:
-
-- The Java writer buffers raw lines into `log-buffer-{trunkIndex}.tmp` files
-- Once the buffer reaches the configured trunk size, the whole trunk is compressed and appended to the main `.tog`
-- Each raw line inside a decompressed trunk uses `[offsetMillis:4][level:1][contentLength:4][content:N]`
-- The viewer scans trunk offsets and line counts once at open time and keeps that index in memory
-- The Rust viewer reads the same binary format directly and only decompresses the trunk(s) needed for the current visible window
-- The complete storage design is documented in `docs/log-storage-structure.md` and `docs/zh-CN/log-storage-structure.md`
-
-Compression algorithm IDs:
-
-| ID | Algorithm |
-| --- | --- |
-| `0` | none |
-| `1` | gzip |
-| `2` | zip |
-| `3` | deflate |
-| `4` | bzip2 |
-| `5` | xz |
-| `6` | zstd |
-| `7` | snappy |
+- English: [`docs/log-storage-structure.md`](docs/log-storage-structure.md)
+- Chinese: [`docs/zh-CN/log-storage-structure.md`](docs/zh-CN/log-storage-structure.md)
 
 ## Manual Prototype Testing
 

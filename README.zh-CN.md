@@ -44,50 +44,12 @@
 
 ## 当前原型文件格式
 
-当前原型采用 **trunk-based** 的二进制布局，字节序为 **big-endian**。
+当前原型使用 **trunk-based** 的 `.tog` 二进制布局，通过整块压缩、轻量索引和低内存窗口读取来支持交互式浏览。
 
-1. **版本号**：3 字节，来自 Maven 版本号
-2. **压缩算法**：2 字节
-3. **Trunk 大小**：2 字节，单位 KB
-4. **基准时间戳**：8 字节，UTC 毫秒时间戳
-5. **日志总行数**：8 字节
-6. **Trunk 数量**：3 字节
-7. **文件扩展名**：`.tog`
-8. 对每个已完成 trunk 重复：
-   - **Trunk 日志行数**：2 字节
-   - **Trunk 压缩后长度**：4 字节
-   - **Trunk 压缩内容**：整个原始 trunk 的压缩结果
+完整的存储结构、字段定义和设计说明请查看：
 
-即：
-
-```text
-[version:3][compression:2][trunkSizeKb:2][baseTimestampUtcMillis:8][totalLogLineCount:8][trunkCount:3]
-[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
-[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
-...
-```
-
-当前原型说明：
-
-- Java 写入端先把原始日志行写入 `log-buffer-{trunkIndex}.tmp`
-- 缓冲达到 trunk 阈值后，会压缩整个 trunk 并追加到主 `.tog`
-- 解压后的 trunk 内，每条原始日志行为 `[offsetMillis:4][level:1][contentLength:4][content:N]`
-- viewer 打开文件时会快速扫描全部 trunk 的起始位置和行数，并在内存中缓存索引
-- Rust viewer 只会解压当前可视窗口需要的 trunk
-- 完整设计见 `docs/log-storage-structure.md` 和 `docs/zh-CN/log-storage-structure.md`
-
-压缩算法 ID：
-
-| ID | 算法 |
-| --- | --- |
-| `0` | none |
-| `1` | gzip |
-| `2` | zip |
-| `3` | deflate |
-| `4` | bzip2 |
-| `5` | xz |
-| `6` | zstd |
-| `7` | snappy |
+- 英文：[`docs/log-storage-structure.md`](docs/log-storage-structure.md)
+- 中文：[`docs/zh-CN/log-storage-structure.md`](docs/zh-CN/log-storage-structure.md)
 
 ## 手动测试命令
 
