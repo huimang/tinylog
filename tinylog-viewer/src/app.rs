@@ -17,10 +17,10 @@ const CURRENT_MARKER_COLOR: Color = Color::Rgb {
     g: 196,
     b: 128,
 };
-const FOCUS_MARKER_OFFSET: &str = "  ";
-const CURRENT_ROW_MARKER: &str = "▌";
+const FOCUS_MARKER_OFFSET: &str = " ";
+const CURRENT_ROW_MARKER: &str = "▪";
 const INACTIVE_ROW_MARKER: &str = " ";
-const CONTENT_PADDING: &str = " ";
+const CONTENT_PADDING: &str = "";
 
 /// Coordinates top-level viewer behavior for the CLI entrypoint.
 #[derive(Debug, Clone)]
@@ -180,14 +180,14 @@ impl ViewerApplication {
         }
         execute!(
             stdout,
-            cursor::MoveTo((frame.line_number_width + 3) as u16, row)
+            cursor::MoveTo((frame.line_number_width + 2) as u16, row)
         )
         .map_err(|error| format!("failed to move to content pane: {error}"))?;
         write!(stdout, "{CONTENT_PADDING}")
             .map_err(|error| format!("failed to write content padding: {error}"))?;
         execute!(
             stdout,
-            cursor::MoveTo((frame.line_number_width + 4) as u16, row)
+            cursor::MoveTo((frame.line_number_width + 2) as u16, row)
         )
         .map_err(|error| format!("failed to move to padded content pane: {error}"))?;
         write!(
