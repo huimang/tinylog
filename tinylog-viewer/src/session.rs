@@ -70,7 +70,7 @@ impl InteractiveViewerSession {
         let window = format::read_visible_window(&self.log_file, self.top_index, visible_count)?;
         let line_number_width = self.total_records.to_string().len().max(6);
         let content_width = width.saturating_sub(line_number_width + 3).max(1);
-        let visible_row_capacity = height.saturating_sub(2);
+        let visible_row_capacity = height.saturating_sub(1);
         let mut rows = Vec::new();
         let header = format!(
             "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
@@ -164,7 +164,7 @@ impl InteractiveViewerSession {
 
     /// Returns the visible record count derived from terminal height and configuration.
     fn visible_record_count(&self, height: usize) -> usize {
-        let terminal_page = height.saturating_sub(2).max(1);
+        let terminal_page = height.saturating_sub(1).max(1);
         usize::min(self.preferred_page_size, terminal_page).max(1)
     }
 }

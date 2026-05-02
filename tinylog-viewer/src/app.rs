@@ -3,6 +3,7 @@ use crate::session::InteractiveViewerSession;
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
+use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use crossterm::terminal::{self, ClearType};
 use std::io::{self, Write};
 
@@ -102,11 +103,10 @@ impl ViewerApplication {
         execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(ClearType::All))
             .map_err(|error| format!("failed to clear screen: {error}"))?;
         write!(stdout, "{}", frame.header).map_err(|error| format!("failed to write header: {error}"))?;
-        self.render_split_row(stdout, 1, frame.line_number_width, Some("line"), "content")?;
         for (index, row) in frame.rows.iter().enumerate() {
             self.render_split_row(
                 stdout,
-                index + 2,
+                index + 1,
                 frame.line_number_width,
                 row.line_number.as_deref(),
                 &row.content,
@@ -127,6 +127,8 @@ impl ViewerApplication {
     ) -> Result<(), String> {
         let row = u16::try_from(row_index).map_err(|_| "terminal row index exceeds supported range".to_string())?;
         execute!(stdout, cursor::MoveTo(0, row)).map_err(|error| format!("failed to move cursor: {error}"))?;
+        execute!(stdout, SetForegroundColor(Color::Blue))
+            .map_err(|error| format!("failed to set line-number color: {error}"))?;
         write!(
             stdout,
             "{:>width$}",
@@ -134,6 +136,7 @@ impl ViewerApplication {
             width = line_number_width
         )
         .map_err(|error| format!("failed to write line-number pane: {error}"))?;
+        execute!(stdout, ResetColor).map_err(|error| format!("failed to reset color: {error}"))?;
         execute!(stdout, cursor::MoveTo(line_number_width as u16, row))
             .map_err(|error| format!("failed to move to pane separator: {error}"))?;
         write!(stdout, " │ ").map_err(|error| format!("failed to write pane separator: {error}"))?;
