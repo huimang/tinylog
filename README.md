@@ -192,12 +192,12 @@ Expected screen content:
 
 ```text
 tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
-     1> 2026-05-01 22:01:00,253 service started
-     2  2026-05-01 22:01:00,278 user signed in
-     3  2026-05-01 22:01:00,353 order created
+     1  ▌ 2026-05-01 22:01:00,253 service started
+     2    2026-05-01 22:01:00,278 user signed in
+     3    2026-05-01 22:01:00,353 order created
 ```
 
-The viewer stays open like a lightweight vim-style browser. The display area is rendered as two independent panes: a blue left logical line-number pane and a right content pane, with a pale-orange one-character marker slot beside the line numbers for the focused row. One logical log line can span multiple rendered rows because of width limits or embedded newlines, but it still keeps a single sequence number in the left pane. The focused line moves freely inside the viewport and the screen scrolls only when another move would push that focused row past the top or bottom edge.
+The viewer stays open like a lightweight vim-style browser. The display area is rendered as two independent panes: a blue left logical line-number pane and a right content pane, with a pale-orange rectangular marker offset slightly to the right of the line numbers for the focused row. The marker is shown only on the first physical row of the focused logical log entry. One logical log line can span multiple rendered rows because of width limits or embedded newlines, but it still keeps a single sequence number in the left pane. The focused line moves freely inside the viewport and the screen scrolls only when another move would push that focused row past the top or bottom edge.
 
 ### 4. Re-run the automated converter test only
 

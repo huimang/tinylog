@@ -17,7 +17,8 @@ const CURRENT_MARKER_COLOR: Color = Color::Rgb {
     g: 196,
     b: 128,
 };
-const CURRENT_ROW_MARKER: &str = ">";
+const FOCUS_MARKER_OFFSET: &str = "  ";
+const CURRENT_ROW_MARKER: &str = "▌";
 const INACTIVE_ROW_MARKER: &str = " ";
 const CONTENT_PADDING: &str = " ";
 
@@ -164,7 +165,9 @@ impl ViewerApplication {
         execute!(stdout, ResetColor).map_err(|error| format!("failed to reset color: {error}"))?;
         execute!(stdout, cursor::MoveTo(frame.line_number_width as u16, row))
             .map_err(|error| format!("failed to move to current-row marker: {error}"))?;
-        if rendered_row.focus == RowFocus::Focused {
+        write!(stdout, "{FOCUS_MARKER_OFFSET}")
+            .map_err(|error| format!("failed to write current-row marker offset: {error}"))?;
+        if rendered_row.focus == RowFocus::Focused && rendered_row.line_number.is_some() {
             execute!(stdout, SetForegroundColor(CURRENT_MARKER_COLOR))
                 .map_err(|error| format!("failed to set current-row marker color: {error}"))?;
             write!(stdout, "{CURRENT_ROW_MARKER}")
@@ -177,14 +180,14 @@ impl ViewerApplication {
         }
         execute!(
             stdout,
-            cursor::MoveTo((frame.line_number_width + 1) as u16, row)
+            cursor::MoveTo((frame.line_number_width + 3) as u16, row)
         )
         .map_err(|error| format!("failed to move to content pane: {error}"))?;
         write!(stdout, "{CONTENT_PADDING}")
             .map_err(|error| format!("failed to write content padding: {error}"))?;
         execute!(
             stdout,
-            cursor::MoveTo((frame.line_number_width + 2) as u16, row)
+            cursor::MoveTo((frame.line_number_width + 4) as u16, row)
         )
         .map_err(|error| format!("failed to move to padded content pane: {error}"))?;
         write!(

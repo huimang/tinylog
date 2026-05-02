@@ -2,6 +2,7 @@ use crate::format;
 
 const HEADER_HEIGHT: usize = 1;
 const MIN_LINE_NUMBER_WIDTH: usize = 6;
+const FOCUS_MARKER_OFFSET_WIDTH: usize = 2;
 const FOCUS_MARKER_WIDTH: usize = 1;
 const CONTENT_PADDING_WIDTH: usize = 1;
 
@@ -163,7 +164,12 @@ impl InteractiveViewerSession {
     /// Returns the width available for content after the viewer gutter columns.
     fn content_width(&self, width: usize, line_number_width: usize) -> usize {
         width
-            .saturating_sub(line_number_width + FOCUS_MARKER_WIDTH + CONTENT_PADDING_WIDTH)
+            .saturating_sub(
+                line_number_width
+                    + FOCUS_MARKER_OFFSET_WIDTH
+                    + FOCUS_MARKER_WIDTH
+                    + CONTENT_PADDING_WIDTH,
+            )
             .max(1)
     }
 
@@ -556,7 +562,7 @@ mod tests {
         let rendered = session.render_frame(8, 24).expect("render wrapped page");
 
         assert_eq!(rendered.rows[0].line_number.as_deref(), Some("1"));
-        assert!(rendered.rows[0].content.contains("2026-05-01 22:0"));
+        assert!(rendered.rows[0].content.starts_with("2026-05-01"));
         assert_eq!(rendered.rows[0].focus, RowFocus::Focused);
         assert_eq!(rendered.rows[1].line_number, None);
         assert!(!rendered.rows[1].content.is_empty());
