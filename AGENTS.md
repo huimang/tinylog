@@ -39,7 +39,7 @@ Code should include comments or doc comments unless the intent is completely obv
 
 ### 1. Commit metadata
 
-- **Author** should be `RonnieDeng`
+- **Author** should be `comdeng`
 - **Committer** can be a dedicated automation identity configured locally
 - **Commit messages** must describe the change itself and **must not mention any AI, model, tool, or agent identity**
 
