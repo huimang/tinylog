@@ -64,7 +64,7 @@ impl InteractiveViewerSession {
         for entry in window.visible_entries {
             lines.push(format!(
                 "{} {}",
-                format::format_timestamp_millis(entry.timestamp_millis, window.zone_offset_minutes)?,
+                format::format_timestamp_millis(entry.timestamp_millis)?,
                 entry.content
             ));
         }
@@ -147,14 +147,27 @@ mod tests {
 
     /// Builds one valid three-record prototype file for session tests.
     fn sample_bytes() -> Vec<u8> {
-        vec![
-            0, 0, 0, 0,
-            0, 0, 1, 139, 207, 229, 104, 0,
-            0, 0, 0, 0, 0, 0, 0, 3,
-            0, 0, 0, 0, 0, 0, 5, b'a', b'l', b'p', b'h', b'a',
-            0, 0, 0, 25, 0, 0, 4, b'b', b'e', b't', b'a',
-            0, 0, 0, 50, 0, 0, 5, b'g', b'a', b'm', b'm', b'a',
-        ]
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0, 1, 0]);
+        bytes.extend_from_slice(&0_u16.to_be_bytes());
+        bytes.extend_from_slice(&512_u16.to_be_bytes());
+        bytes.extend_from_slice(&1_777_672_860_253_u64.to_be_bytes());
+        bytes.extend_from_slice(&3_u64.to_be_bytes());
+        bytes.extend_from_slice(&[0, 0, 1]);
+        bytes.extend_from_slice(&3_u16.to_be_bytes());
+        let mut trunk = Vec::new();
+        trunk.extend_from_slice(&0_u32.to_be_bytes());
+        trunk.extend_from_slice(&5_u32.to_be_bytes());
+        trunk.extend_from_slice(b"alpha");
+        trunk.extend_from_slice(&25_u32.to_be_bytes());
+        trunk.extend_from_slice(&4_u32.to_be_bytes());
+        trunk.extend_from_slice(b"beta");
+        trunk.extend_from_slice(&50_u32.to_be_bytes());
+        trunk.extend_from_slice(&5_u32.to_be_bytes());
+        trunk.extend_from_slice(b"gamma");
+        bytes.extend_from_slice(&(trunk.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&trunk);
+        bytes
     }
 
     #[test]

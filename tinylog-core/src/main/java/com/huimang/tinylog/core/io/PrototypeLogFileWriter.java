@@ -4,89 +4,205 @@ import com.huimang.tinylog.core.model.LogRecord;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.file.Paths;
 import java.util.Objects;
 
 /**
- * Writes the current prototype tinylog file format to a single file path.
+ * Writes the current trunk-based tinylog file format to a single target file.
  */
 public final class PrototypeLogFileWriter implements LogWriter {
     private final Path path;
     private final CompressionAlgorithm compressionAlgorithm;
-    private final List<LogRecord> records;
+    private final int trunkSizeKb;
+    private final RandomAccessFile mainFile;
     private boolean closed;
+    private long baseTimestampUtcMillis = -1L;
+    private long lastTimestampUtcMillis = Long.MIN_VALUE;
+    private long totalLogLineCount;
+    private int trunkCount;
+    private int nextTrunkIndex;
+    private Path currentBufferPath;
+    private DataOutputStream currentBufferOutput;
+    private int currentBufferBytes;
+    private int currentBufferLineCount;
 
     /**
-     * Creates a writer that rewrites the target file on each flush.
+     * Creates a writer that uses the default compression and trunk size.
      */
-    public PrototypeLogFileWriter(Path path) {
-        this(path, PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM);
+    public PrototypeLogFileWriter(Path path) throws IOException {
+        this(path, PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM, PrototypeLogFileFormat.DEFAULT_TRUNK_SIZE_KB);
     }
 
     /**
-     * Creates a writer that rewrites the target file on each flush with the selected compression.
+     * Creates a writer that uses the selected compression and the default trunk size.
      */
-    public PrototypeLogFileWriter(Path path, CompressionAlgorithm compressionAlgorithm) {
+    public PrototypeLogFileWriter(Path path, CompressionAlgorithm compressionAlgorithm) throws IOException {
+        this(path, compressionAlgorithm, PrototypeLogFileFormat.DEFAULT_TRUNK_SIZE_KB);
+    }
+
+    /**
+     * Creates a writer that uses the selected compression and trunk size.
+     */
+    public PrototypeLogFileWriter(Path path, CompressionAlgorithm compressionAlgorithm, int trunkSizeKb)
+            throws IOException {
         this.path = Objects.requireNonNull(path, "path");
         this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
-        this.records = new ArrayList<LogRecord>();
+        this.trunkSizeKb = PrototypeLogFileFormat.validateTrunkSizeKb(trunkSizeKb);
+        Path parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        this.mainFile = new RandomAccessFile(path.toFile(), "rw");
+        this.mainFile.setLength(0L);
+        PrototypeLogFileFormat.writeHeader(
+                mainFile,
+                compressionAlgorithm,
+                this.trunkSizeKb,
+                0L,
+                0L,
+                0);
+        openNextBuffer();
     }
 
     @Override
-    public void append(LogRecord record) {
+    public void append(LogRecord record) throws IOException {
         ensureOpen();
         Objects.requireNonNull(record, "record");
-        if (!records.isEmpty()) {
-            long previousTimestamp = records.get(records.size() - 1).getTimestampMillis();
-            if (record.getTimestampMillis() < previousTimestamp) {
-                throw new IllegalArgumentException("records must be appended in timestamp order");
-            }
+        if (lastTimestampUtcMillis != Long.MIN_VALUE && record.getTimestampMillis() < lastTimestampUtcMillis) {
+            throw new IllegalArgumentException("records must be appended in timestamp order");
         }
-        records.add(record);
+        if (baseTimestampUtcMillis < 0L) {
+            baseTimestampUtcMillis = record.getTimestampMillis();
+            updateBaseTimestamp();
+        }
+        if (currentBufferLineCount == PrototypeLogFileFormat.MAX_TRUNK_LOG_LINE_COUNT) {
+            flushCurrentTrunk(true);
+        }
+        int lineBytes = PrototypeLogFileFormat.measureRawLogLine(record);
+        if (currentBufferLineCount > 0
+                && currentBufferBytes + lineBytes > PrototypeLogFileFormat.trunkSizeBytes(trunkSizeKb)) {
+            flushCurrentTrunk(true);
+        }
+        PrototypeLogFileFormat.writeRawLogLine(currentBufferOutput, record, baseTimestampUtcMillis);
+        currentBufferBytes += lineBytes;
+        currentBufferLineCount++;
+        lastTimestampUtcMillis = record.getTimestampMillis();
+        if (currentBufferBytes >= PrototypeLogFileFormat.trunkSizeBytes(trunkSizeKb)) {
+            flushCurrentTrunk(true);
+        }
     }
 
     @Override
     public void flush() throws IOException {
         ensureOpen();
-        Path parent = path.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
+        if (currentBufferOutput != null) {
+            currentBufferOutput.flush();
         }
-        try (DataOutputStream output = new DataOutputStream(
-                new BufferedOutputStream(Files.newOutputStream(path)))) {
-            output.writeShort(compressionAlgorithm.getId());
-            long startTimestampMillis = records.isEmpty() ? 0L : records.get(0).getTimestampMillis();
-            short headerTimeZoneOffsetMinutes = records.isEmpty()
-                    ? 0
-                    : PrototypeLogFileFormat.resolveHeaderTimeZoneOffsetMinutes(startTimestampMillis);
-            output.writeShort(headerTimeZoneOffsetMinutes);
-            output.writeLong(startTimestampMillis);
-            output.writeLong(records.size());
-            for (LogRecord record : records) {
-                long offsetMillis = record.getTimestampMillis() - startTimestampMillis;
-                if (offsetMillis < 0 || offsetMillis > PrototypeLogFileFormat.MAX_OFFSET_MILLIS) {
-                    throw new IllegalArgumentException("record offset must fit in 4 bytes");
-                }
-                byte[] content = PrototypeLogFileFormat.toContentBytes(record, compressionAlgorithm);
-                if (content.length > PrototypeLogFileFormat.MAX_CONTENT_LENGTH) {
-                    throw new IllegalArgumentException("compressed record content must fit in 3 bytes");
-                }
-                output.writeInt((int) offsetMillis);
-                PrototypeLogFileFormat.writeUnsignedMedium(output, content.length);
-                output.write(content);
-            }
-        }
+        flushCurrentTrunk(true);
     }
 
     @Override
     public void close() throws IOException {
-        if (!closed) {
-            flush();
-            closed = true;
+        if (closed) {
+            return;
         }
+        try {
+            if (currentBufferOutput != null) {
+                currentBufferOutput.flush();
+            }
+            flushCurrentTrunk(false);
+            closeAndDeleteEmptyBuffer();
+        } finally {
+            closed = true;
+            mainFile.close();
+        }
+    }
+
+    /**
+     * Opens the next raw trunk buffer file.
+     */
+    private void openNextBuffer() throws IOException {
+        currentBufferPath = resolveBufferPath(nextTrunkIndex);
+        Files.deleteIfExists(currentBufferPath);
+        currentBufferOutput = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(currentBufferPath)));
+        currentBufferBytes = 0;
+        currentBufferLineCount = 0;
+    }
+
+    /**
+     * Persists the current raw buffer as one compressed trunk.
+     */
+    private void flushCurrentTrunk(boolean openNextBuffer) throws IOException {
+        if (currentBufferLineCount == 0) {
+            if (openNextBuffer && currentBufferOutput == null) {
+                openNextBuffer();
+            }
+            return;
+        }
+        currentBufferOutput.close();
+        currentBufferOutput = null;
+        byte[] rawTrunkBytes = Files.readAllBytes(currentBufferPath);
+        byte[] compressedTrunkBytes = compressionAlgorithm.compress(rawTrunkBytes);
+        mainFile.seek(mainFile.length());
+        mainFile.writeShort(currentBufferLineCount);
+        mainFile.writeInt(compressedTrunkBytes.length);
+        mainFile.write(compressedTrunkBytes);
+        totalLogLineCount += currentBufferLineCount;
+        trunkCount++;
+        updateHeaderCounters();
+        Files.deleteIfExists(currentBufferPath);
+        nextTrunkIndex++;
+        currentBufferBytes = 0;
+        currentBufferLineCount = 0;
+        currentBufferPath = null;
+        if (openNextBuffer) {
+            openNextBuffer();
+        }
+    }
+
+    /**
+     * Updates the stored base timestamp once the first record is known.
+     */
+    private void updateBaseTimestamp() throws IOException {
+        mainFile.seek(PrototypeLogFileFormat.BASE_TIMESTAMP_OFFSET);
+        mainFile.writeLong(baseTimestampUtcMillis);
+        mainFile.seek(mainFile.length());
+    }
+
+    /**
+     * Updates the header counters after a trunk flush.
+     */
+    private void updateHeaderCounters() throws IOException {
+        mainFile.seek(PrototypeLogFileFormat.TOTAL_LOG_LINE_COUNT_OFFSET);
+        mainFile.writeLong(totalLogLineCount);
+        PrototypeLogFileFormat.writeUnsignedMedium(mainFile, trunkCount);
+        mainFile.seek(mainFile.length());
+    }
+
+    /**
+     * Closes and removes the empty current buffer file.
+     */
+    private void closeAndDeleteEmptyBuffer() throws IOException {
+        if (currentBufferOutput != null) {
+            currentBufferOutput.close();
+            currentBufferOutput = null;
+        }
+        if (currentBufferPath != null) {
+            Files.deleteIfExists(currentBufferPath);
+            currentBufferPath = null;
+        }
+    }
+
+    /**
+     * Resolves the temporary buffer file path for one trunk index.
+     */
+    private Path resolveBufferPath(int trunkIndex) {
+        String fileName = "log-buffer-" + trunkIndex + ".tmp";
+        Path parent = path.getParent();
+        return parent == null ? Paths.get(fileName) : parent.resolve(fileName);
     }
 
     private void ensureOpen() {

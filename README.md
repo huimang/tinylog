@@ -87,37 +87,41 @@ Recommended workflow:
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
 - **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration
 - **Rust viewer**: standalone Cargo project under `tinylog-viewer`
+- **Storage redesign draft (EN)**: `docs/log-storage-structure.md`
+- **Storage redesign draft (ZH-CN)**: `docs/zh-CN/log-storage-structure.md`
 
 ## Prototype File Format / 当前原型格式
 
-The current prototype uses a compact binary layout in **big-endian** order:
+The current prototype uses a **trunk-based** binary layout in **big-endian** order.
 
-1. **Compression algorithm**: 2 bytes
-2. **Header time-zone offset**: 2 bytes, signed minutes
-3. **Start timestamp**: 8 bytes, milliseconds since epoch
-4. **Record count**: 8 bytes
-5. **File extension**: `.tog`
-5. Repeated for each record:
-   - **Millisecond offset** from the start timestamp: 4 bytes
-   - **Compressed content length**: 3 bytes
-   - **Compressed content bytes**: UTF-8 message payload after line-body compression
+1. **Version**: 3 bytes, sourced from the Maven version tuple
+2. **Compression algorithm**: 2 bytes
+3. **Trunk size**: 2 bytes, stored in KB
+4. **Base timestamp**: 8 bytes, UTC milliseconds
+5. **Total log line count**: 8 bytes
+6. **Trunk count**: 3 bytes
+7. **File extension**: `.tog`
+8. Repeated for each completed trunk:
+   - **Trunk log line count**: 2 bytes
+   - **Compressed trunk length**: 4 bytes
+   - **Compressed trunk bytes**: the full raw trunk payload after whole-trunk compression
 
 In other words:
 
 ```text
-[compression:2][zoneOffsetMinutes:2][startTimestamp:8][recordCount:8]
-[offset:4][compressedLength:3][compressedContent:N]
-[offset:4][compressedLength:3][compressedContent:N]
+[version:3][compression:2][trunkSizeKb:2][baseTimestampUtcMillis:8][totalLogLineCount:8][trunkCount:3]
+[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
+[trunkLogLineCount:2][compressedContentLength:4][compressedContent:N]
 ...
 ```
 
 Current prototype notes:
 
-- The Java prototype writer stores the rendered log **message** as the payload and compresses it per line
-- The Java prototype reader rebuilds `LogRecord` instances using the decoded message
-- The Java prototype converter can transform `normal.log` plaintext input into a `.tog` file
-- The Rust viewer reads the same binary format directly, resolves the header algorithm, and decompresses only the visible records
-- This prototype focuses on validating the binary framing first, before adding richer structured payloads and indexes
+- The Java writer buffers raw lines into `log-buffer-{trunkIndex}.tmp` files
+- Once the buffer reaches the configured trunk size, the whole trunk is compressed and appended to the main `.tog`
+- Each raw line inside a decompressed trunk uses `[offsetMillis:4][contentLength:4][content:N]`
+- The Rust viewer reads the same binary format directly and only decompresses the trunk(s) needed for the current visible window
+- The complete storage design is documented in `docs/log-storage-structure.md` and `docs/zh-CN/log-storage-structure.md`
 
 Compression algorithm IDs:
 
@@ -140,7 +144,7 @@ The current prototype accepts plaintext log lines in this format:
 <yyyy-MM-dd HH:mm:ss,SSS> <message>
 ```
 
-The converter interprets that local timestamp using the **system default time zone** of the machine running the conversion, and stores that fixed offset in the file header. The viewer always renders the file using the header offset, so the displayed date text stays stable across machines and time zones.
+The converter interprets that timestamp text as a **UTC calendar value**, and the viewer renders the reconstructed timestamp in UTC as well. That keeps the displayed text stable because every raw line only stores its millisecond offset from the file-level UTC base timestamp.
 
 ### 1. Create a sample `normal.log`
 
@@ -162,7 +166,7 @@ java -jar tinylog-core/target/tinylog-core-0.1.0-SNAPSHOT-all.jar normal.log nor
 Expected output:
 
 ```text
-converted normal.log to normal.tog using zstd
+converted normal.log to normal.tog using gzip
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer

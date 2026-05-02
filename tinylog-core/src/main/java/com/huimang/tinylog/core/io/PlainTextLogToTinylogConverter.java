@@ -2,19 +2,18 @@ package com.huimang.tinylog.core.io;
 
 import com.huimang.tinylog.core.model.LogLevel;
 import com.huimang.tinylog.core.model.LogRecord;
+import java.io.BufferedReader;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.List;
 import java.util.Objects;
 
 /**
- * Converts a simple plaintext log file into the prototype tinylog binary format.
+ * Converts a plaintext log file into the current trunk-based tinylog format.
  */
 public final class PlainTextLogToTinylogConverter {
     /**
@@ -29,39 +28,54 @@ public final class PlainTextLogToTinylogConverter {
     private static final int TIMESTAMP_TEXT_LENGTH = 23;
 
     /**
-     * Stores the compression algorithm used for converted line bodies.
+     * Stores the compression algorithm used for completed trunks.
      */
     private final CompressionAlgorithm compressionAlgorithm;
 
     /**
-     * Creates a converter that uses the prototype default compression algorithm.
+     * Stores the configured trunk size in KB.
+     */
+    private final int trunkSizeKb;
+
+    /**
+     * Creates a converter that uses the default compression and trunk size.
      */
     public PlainTextLogToTinylogConverter() {
-        this(PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM);
+        this(PrototypeLogFileFormat.DEFAULT_COMPRESSION_ALGORITHM, PrototypeLogFileFormat.DEFAULT_TRUNK_SIZE_KB);
     }
 
     /**
-     * Creates a converter that uses the selected line-body compression algorithm.
+     * Creates a converter that uses the selected compression and default trunk size.
      */
     public PlainTextLogToTinylogConverter(CompressionAlgorithm compressionAlgorithm) {
-        this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
+        this(compressionAlgorithm, PrototypeLogFileFormat.DEFAULT_TRUNK_SIZE_KB);
     }
 
     /**
-     * Converts one plaintext log file to one tinylog prototype file.
+     * Creates a converter that uses the selected compression and trunk size.
+     */
+    public PlainTextLogToTinylogConverter(CompressionAlgorithm compressionAlgorithm, int trunkSizeKb) {
+        this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
+        this.trunkSizeKb = PrototypeLogFileFormat.validateTrunkSizeKb(trunkSizeKb);
+    }
+
+    /**
+     * Converts one plaintext log file to one trunk-based tinylog file.
      *
-     * <p>The current prototype accepts lines in the form:
-     * {@code <yyyy-MM-dd HH:mm:ss,SSS><space><message>}
+     * <p>The accepted line format is {@code <yyyy-MM-dd HH:mm:ss,SSS><space><message>}, and the timestamp text is
+     * interpreted as a UTC calendar value to match the file-level UTC base timestamp.
      */
     public void convert(Path plainTextLogPath, Path tinylogPath) throws IOException {
         Objects.requireNonNull(plainTextLogPath, "plainTextLogPath");
         Objects.requireNonNull(tinylogPath, "tinylogPath");
         validateTinylogPath(tinylogPath);
 
-        List<String> lines = Files.readAllLines(plainTextLogPath, StandardCharsets.UTF_8);
-        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(tinylogPath, compressionAlgorithm)) {
+        try (BufferedReader reader = Files.newBufferedReader(plainTextLogPath, PrototypeLogFileFormat.CONTENT_CHARSET);
+                PrototypeLogFileWriter writer =
+                        new PrototypeLogFileWriter(tinylogPath, compressionAlgorithm, trunkSizeKb)) {
             int lineNumber = 0;
-            for (String line : lines) {
+            String line;
+            while ((line = reader.readLine()) != null) {
                 lineNumber++;
                 if (line.trim().isEmpty()) {
                     continue;
@@ -83,7 +97,7 @@ public final class PlainTextLogToTinylogConverter {
     }
 
     /**
-     * Parses one plaintext line into a prototype log record.
+     * Parses one plaintext line into one logical log record.
      */
     private LogRecord parseLine(Path plainTextLogPath, int lineNumber, String line) {
         if (line.length() <= TIMESTAMP_TEXT_LENGTH + 1 || line.charAt(TIMESTAMP_TEXT_LENGTH) != ' ') {
@@ -96,8 +110,7 @@ public final class PlainTextLogToTinylogConverter {
             timestampMillis = LocalDateTime.parse(
                     line.substring(0, TIMESTAMP_TEXT_LENGTH),
                     TIMESTAMP_FORMATTER)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
+                    .toInstant(ZoneOffset.UTC)
                     .toEpochMilli();
         } catch (DateTimeParseException exception) {
             throw new IllegalArgumentException("invalid timestamp at "

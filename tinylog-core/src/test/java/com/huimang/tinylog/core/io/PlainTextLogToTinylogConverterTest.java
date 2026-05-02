@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -46,7 +46,8 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
         byte[] header = Files.readAllBytes(tinylogPath);
-        assertEquals(CompressionAlgorithm.ZSTD.getId(), readAlgorithmId(header));
+        assertEquals(CompressionAlgorithm.GZIP.getId(), readAlgorithmId(header));
+        assertEquals(PrototypeLogFileFormat.DEFAULT_TRUNK_SIZE_KB, readTrunkSizeKb(header));
     }
 
     @Test
@@ -81,7 +82,7 @@ public class PlainTextLogToTinylogConverterTest {
     }
 
     @Test
-    void shouldConvertWithSelectedCompressionAlgorithm() throws IOException {
+    void shouldConvertWithSelectedCompressionAlgorithmAndTrunkSize() throws IOException {
         Path normalLogPath = tempDir.resolve("normal.log");
         Path tinylogPath = tempDir.resolve("normal.tog");
         Files.write(
@@ -89,10 +90,11 @@ public class PlainTextLogToTinylogConverterTest {
                 Collections.singletonList("2026-05-01 22:01:00,253 service started"),
                 StandardCharsets.UTF_8);
 
-        new PlainTextLogToTinylogConverter(CompressionAlgorithm.ZSTD).convert(normalLogPath, tinylogPath);
+        new PlainTextLogToTinylogConverter(CompressionAlgorithm.ZSTD, 1024).convert(normalLogPath, tinylogPath);
 
         byte[] header = Files.readAllBytes(tinylogPath);
         assertEquals(CompressionAlgorithm.ZSTD.getId(), readAlgorithmId(header));
+        assertEquals(1024, readTrunkSizeKb(header));
         assertTrue(header.length > PrototypeLogFileFormat.HEADER_BYTES);
     }
 
@@ -108,20 +110,26 @@ public class PlainTextLogToTinylogConverterTest {
     }
 
     /**
-     * Converts one plaintext timestamp string to epoch milliseconds using the host zone.
+     * Converts one plaintext timestamp string to epoch milliseconds in UTC.
      */
     private static long toEpochMillis(String value) {
         return LocalDateTime.parse(value, DateTimeFormatterHolder.TIMESTAMP_FORMATTER)
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
+                .toInstant(ZoneOffset.UTC)
                 .toEpochMilli();
     }
 
     /**
-     * Reads the two-byte big-endian compression algorithm field from a prototype file header.
+     * Reads the two-byte big-endian compression algorithm field from a file header.
      */
     private static int readAlgorithmId(byte[] header) {
-        return ((header[0] & 0xFF) << 8) | (header[1] & 0xFF);
+        return ((header[3] & 0xFF) << 8) | (header[4] & 0xFF);
+    }
+
+    /**
+     * Reads the two-byte big-endian trunk size field from a file header.
+     */
+    private static int readTrunkSizeKb(byte[] header) {
+        return ((header[5] & 0xFF) << 8) | (header[6] & 0xFF);
     }
 
     /**
