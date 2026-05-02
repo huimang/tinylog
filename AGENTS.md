@@ -39,8 +39,10 @@ Code should include comments or doc comments unless the intent is completely obv
 
 ### 1. Commit metadata
 
-- **Author** should be `comdeng`
-- **Committer** can be a dedicated automation identity configured locally
+- **Author** should be the actual human contributor who owns the change
+- **Committer** should be set by the AI according to its own origin and identity source
+- When the AI has a known upstream identity, it should use the matching committer name and email for that source
+- For GitHub Copilot-based work, use `Copilot Committer <copilot-committer@github.com>`
 - **Commit messages** must describe the change itself and **must not mention any AI, model, tool, or agent identity**
 
 ### 2. Commit granularity
