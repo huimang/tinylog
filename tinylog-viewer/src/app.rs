@@ -1,6 +1,6 @@
 use crate::{
     config::ViewerConfig,
-    session::{InteractiveViewerSession, RenderedFrame, RenderedRow, RowFocus},
+    session::{InteractiveViewerSession, RenderedFrame, RenderedRow, RowFocus, ViewerSession},
 };
 use crossterm::{
     cursor,
@@ -11,14 +11,15 @@ use crossterm::{
 };
 use std::io::{self, Write};
 
+const LINE_JUMP_COMMAND_PREFIX: &str = ":";
 const LINE_NUMBER_COLOR: Color = Color::Blue;
 const CURRENT_MARKER_COLOR: Color = Color::Rgb {
     r: 255,
     g: 196,
     b: 128,
 };
-const FOCUS_MARKER_OFFSET: &str = "";
-const CURRENT_ROW_MARKER: &str = "▏";
+const FOCUS_MARKER_OFFSET: &str = " ";
+const CURRENT_ROW_MARKER: &str = "▪";
 const INACTIVE_ROW_MARKER: &str = " ";
 const CONTENT_PADDING: &str = "";
 
@@ -37,8 +38,8 @@ impl ViewerApplication {
     /// Returns the startup banner shown by the scaffold CLI.
     pub fn banner(&self) -> String {
         match self.config.log_file.as_deref() {
-            Some(path) => format!("tinylog viewer scaffold initialized for {path}."),
-            None => "tinylog viewer scaffold initialized.".to_string(),
+            Some(path) => format!("Tinylog Viewer scaffold initialized for {path}."),
+            None => "Tinylog Viewer scaffold initialized.".to_string(),
         }
     }
 
@@ -75,18 +76,40 @@ impl ViewerApplication {
         session: &mut InteractiveViewerSession,
         stdout: &mut io::Stdout,
     ) -> Result<(), String> {
+        let mut command_buffer: Option<String> = None;
+        let mut status_message: Option<String> = None;
         loop {
             let (width, height) = terminal::size()
                 .map_err(|error| format!("failed to query terminal size: {error}"))?;
-            self.render(session, usize::from(height), usize::from(width), stdout)?;
+            self.render(
+                session,
+                usize::from(height),
+                usize::from(width),
+                command_buffer.as_deref(),
+                status_message.as_deref(),
+                stdout,
+            )?;
             let event =
                 event::read().map_err(|error| format!("failed to read key event: {error}"))?;
             if let Event::Key(key) = event {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                if command_buffer.is_some() {
+                    self.handle_command_key(
+                        session,
+                        key.code,
+                        &mut command_buffer,
+                        &mut status_message,
+                    )?;
+                    continue;
+                }
+                status_message = None;
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char(':') => {
+                        command_buffer = Some(":".to_string());
+                    }
                     KeyCode::Char('j') | KeyCode::Down => session.move_down(),
                     KeyCode::Char('k') | KeyCode::Up => session.move_up(),
                     KeyCode::Enter => session.quarter_page_down(usize::from(height)),
@@ -115,22 +138,94 @@ impl ViewerApplication {
         session: &mut InteractiveViewerSession,
         height: usize,
         width: usize,
+        command_buffer: Option<&str>,
+        status_message: Option<&str>,
         stdout: &mut io::Stdout,
     ) -> Result<(), String> {
         let frame = session.render_frame(height, width)?;
+        let header = self.render_header_text(&frame, command_buffer, status_message);
         execute!(
             stdout,
             cursor::MoveTo(0, 0),
             terminal::Clear(ClearType::All)
         )
         .map_err(|error| format!("failed to clear screen: {error}"))?;
-        write!(stdout, "{}", frame.header)
+        write!(stdout, "{header}")
             .map_err(|error| format!("failed to write header: {error}"))?;
         self.render_rows(stdout, &frame)?;
         stdout
             .flush()
             .map_err(|error| format!("failed to flush output: {error}"))?;
         Ok(())
+    }
+
+    /// Resolves the full header text, including transient command or status overlays.
+    fn render_header_text(
+        &self,
+        frame: &RenderedFrame,
+        command_buffer: Option<&str>,
+        status_message: Option<&str>,
+    ) -> String {
+        if let Some(command_buffer) = command_buffer {
+            return format!("{} | command={command_buffer}", frame.header);
+        }
+        if let Some(status_message) = status_message {
+            return format!("{} | {status_message}", frame.header);
+        }
+        frame.header.clone()
+    }
+
+    /// Handles one key press while the viewer is in colon-command input mode.
+    fn handle_command_key(
+        &self,
+        session: &mut InteractiveViewerSession,
+        key_code: KeyCode,
+        command_buffer: &mut Option<String>,
+        status_message: &mut Option<String>,
+    ) -> Result<(), String> {
+        match key_code {
+            KeyCode::Esc => {
+                *command_buffer = None;
+                *status_message = None;
+            }
+            KeyCode::Enter => {
+                let command = command_buffer.take().unwrap_or_default();
+                match self.execute_command(session, &command) {
+                    Ok(()) => {
+                        *status_message = None;
+                    }
+                    Err(error) => {
+                        *status_message = Some(error);
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(command) = command_buffer.as_mut() {
+                    command.pop();
+                    if command.is_empty() {
+                        *command_buffer = None;
+                    }
+                }
+            }
+            KeyCode::Char(character) => {
+                if let Some(command) = command_buffer.as_mut() {
+                    command.push(character);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Executes one supported colon command against the active session.
+    fn execute_command(
+        &self,
+        session: &mut InteractiveViewerSession,
+        command: &str,
+    ) -> Result<(), String> {
+        let target_line = parse_line_jump_command(command)?;
+        let target_index = u64::try_from(target_line.saturating_sub(1)).unwrap_or(u64::MAX);
+        session.jump_to(target_index)
     }
 
     /// Draws all visible rows for the current frame.
@@ -201,9 +296,26 @@ impl ViewerApplication {
     }
 }
 
+/// Parses one `:<lineNumber>` command into a 1-based logical line number.
+fn parse_line_jump_command(command: &str) -> Result<usize, String> {
+    let line_number_text = command
+        .strip_prefix(LINE_JUMP_COMMAND_PREFIX)
+        .ok_or_else(|| "unsupported command, use :<lineNumber>".to_string())?;
+    if line_number_text.is_empty() {
+        return Err("missing line number after :".to_string());
+    }
+    let line_number = line_number_text
+        .parse::<usize>()
+        .map_err(|error| format!("invalid line number '{line_number_text}': {error}"))?;
+    if line_number == 0 {
+        return Err("line number must be greater than zero".to_string());
+    }
+    Ok(line_number)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ViewerApplication;
+    use super::{parse_line_jump_command, ViewerApplication};
     use crate::config::ViewerConfig;
 
     #[test]
@@ -215,7 +327,24 @@ mod tests {
 
         assert_eq!(
             app.banner(),
-            "tinylog viewer scaffold initialized for demo.tog."
+            "Tinylog Viewer scaffold initialized for demo.tog."
+        );
+    }
+
+    #[test]
+    fn parse_line_jump_command_accepts_colon_number() {
+        assert_eq!(parse_line_jump_command(":128").expect("parse jump command"), 128);
+    }
+
+    #[test]
+    fn parse_line_jump_command_rejects_invalid_inputs() {
+        assert_eq!(
+            parse_line_jump_command("+42").expect_err("reject unsupported command"),
+            "unsupported command, use :<lineNumber>"
+        );
+        assert_eq!(
+            parse_line_jump_command(":0").expect_err("reject zero line"),
+            "line number must be greater than zero"
         );
     }
 }
