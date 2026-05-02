@@ -98,16 +98,48 @@ impl ViewerApplication {
         width: usize,
         stdout: &mut io::Stdout,
     ) -> Result<(), String> {
-        let lines = session.render_lines(height, width)?;
+        let frame = session.render_frame(height, width)?;
         execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(ClearType::All))
             .map_err(|error| format!("failed to clear screen: {error}"))?;
-        for (index, line) in lines.iter().enumerate() {
-            if index > 0 {
-                writeln!(stdout).map_err(|error| format!("failed to write newline: {error}"))?;
-            }
-            write!(stdout, "{line}").map_err(|error| format!("failed to write line: {error}"))?;
+        write!(stdout, "{}", frame.header).map_err(|error| format!("failed to write header: {error}"))?;
+        self.render_split_row(stdout, 1, frame.line_number_width, Some("line"), "content")?;
+        for (index, row) in frame.rows.iter().enumerate() {
+            self.render_split_row(
+                stdout,
+                index + 2,
+                frame.line_number_width,
+                row.line_number.as_deref(),
+                &row.content,
+            )?;
         }
         stdout.flush().map_err(|error| format!("failed to flush output: {error}"))?;
+        Ok(())
+    }
+
+    /// Draws one split-pane row by writing the left and right areas independently.
+    fn render_split_row(
+        &self,
+        stdout: &mut io::Stdout,
+        row_index: usize,
+        line_number_width: usize,
+        line_number: Option<&str>,
+        content: &str,
+    ) -> Result<(), String> {
+        let row = u16::try_from(row_index).map_err(|_| "terminal row index exceeds supported range".to_string())?;
+        execute!(stdout, cursor::MoveTo(0, row)).map_err(|error| format!("failed to move cursor: {error}"))?;
+        write!(
+            stdout,
+            "{:>width$}",
+            line_number.unwrap_or(""),
+            width = line_number_width
+        )
+        .map_err(|error| format!("failed to write line-number pane: {error}"))?;
+        execute!(stdout, cursor::MoveTo(line_number_width as u16, row))
+            .map_err(|error| format!("failed to move to pane separator: {error}"))?;
+        write!(stdout, " │ ").map_err(|error| format!("failed to write pane separator: {error}"))?;
+        execute!(stdout, cursor::MoveTo((line_number_width + 3) as u16, row))
+            .map_err(|error| format!("failed to move to content pane: {error}"))?;
+        write!(stdout, "{content}").map_err(|error| format!("failed to write content pane: {error}"))?;
         Ok(())
     }
 }

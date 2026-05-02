@@ -25,6 +25,21 @@ pub struct InteractiveViewerSession {
     preferred_page_size: usize,
 }
 
+/// Holds one rendered viewer frame with pane metadata and visible rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedFrame {
+    pub header: String,
+    pub line_number_width: usize,
+    pub rows: Vec<RenderedRow>,
+}
+
+/// Holds one rendered row split into left and right pane content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedRow {
+    pub line_number: Option<String>,
+    pub content: String,
+}
+
 impl InteractiveViewerSession {
     /// Opens a session for one target log file.
     pub fn open(log_file: String, preferred_page_size: usize) -> Result<Self, String> {
@@ -49,20 +64,20 @@ impl InteractiveViewerSession {
         self.total_records
     }
 
-    /// Renders the current visible window into terminal lines.
-    pub fn render_lines(&self, height: usize, width: usize) -> Result<Vec<String>, String> {
+    /// Renders the current visible window into a split-pane frame.
+    pub fn render_frame(&self, height: usize, width: usize) -> Result<RenderedFrame, String> {
         let visible_count = self.visible_record_count(height);
         let window = format::read_visible_window(&self.log_file, self.top_index, visible_count)?;
-        let line_number_width = self.total_records.to_string().len().max(1);
+        let line_number_width = self.total_records.to_string().len().max(6);
         let content_width = width.saturating_sub(line_number_width + 3).max(1);
-        let mut lines = Vec::new();
-        lines.push(format!(
+        let visible_row_capacity = height.saturating_sub(2);
+        let mut rows = Vec::new();
+        let header = format!(
             "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
             self.log_file,
             window.total_records,
             self.top_index.saturating_add(1)
-        ));
-        lines.push(String::new());
+        );
         for (index, entry) in window.visible_entries.into_iter().enumerate() {
             let logical_line_number = self.top_index.saturating_add(index).saturating_add(1);
             let rendered_content = wrap_content(
@@ -74,25 +89,34 @@ impl InteractiveViewerSession {
                 content_width,
             );
             for (rendered_index, rendered_line) in rendered_content.into_iter().enumerate() {
-                lines.push(format_rendered_row(
-                    if rendered_index == 0 {
-                        Some(logical_line_number)
+                rows.push(RenderedRow {
+                    line_number: if rendered_index == 0 {
+                        Some(logical_line_number.to_string())
                     } else {
                         None
                     },
-                    line_number_width,
-                    &rendered_line,
-                ));
+                    content: rendered_line,
+                });
+                if rows.len() >= visible_row_capacity {
+                    break;
+                }
             }
-            if lines.len() >= height {
+            if rows.len() >= visible_row_capacity {
                 break;
             }
         }
-        let remaining = height.saturating_sub(lines.len());
+        let remaining = visible_row_capacity.saturating_sub(rows.len());
         for _ in 0..remaining {
-            lines.push(String::new());
+            rows.push(RenderedRow {
+                line_number: None,
+                content: String::new(),
+            });
         }
-        Ok(lines)
+        Ok(RenderedFrame {
+            header,
+            line_number_width,
+            rows,
+        })
     }
 
     /// Moves the window down by one record.
@@ -142,14 +166,6 @@ impl InteractiveViewerSession {
     fn visible_record_count(&self, height: usize) -> usize {
         let terminal_page = height.saturating_sub(2).max(1);
         usize::min(self.preferred_page_size, terminal_page).max(1)
-    }
-}
-
-/// Formats one rendered row so the line-number region and content region stay visually separate.
-fn format_rendered_row(line_number: Option<usize>, line_number_width: usize, content: &str) -> String {
-    match line_number {
-        Some(line_number) => format!("{:<width$} | {}", line_number, content, width = line_number_width),
-        None => format!("{:width$} | {}", "", content, width = line_number_width),
     }
 }
 
@@ -240,15 +256,18 @@ mod tests {
 
         let mut session =
             InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2).expect("open session");
-        let first_page = session.render_lines(4, 80).expect("render first page");
+        let first_page = session.render_frame(4, 80).expect("render first page");
         session.move_down();
-        let second_page = session.render_lines(4, 80).expect("render second page");
+        let second_page = session.render_frame(4, 80).expect("render second page");
 
-        assert!(first_page.iter().any(|line| line.contains("1 | 2026-05-01 22:01:00,253 alpha")));
-        assert!(first_page.iter().any(|line| line.contains("2 | 2026-05-01 22:01:00,278 beta")));
-        assert!(!first_page.iter().any(|line| line.contains("gamma")));
-        assert!(second_page.iter().any(|line| line.contains("2 | 2026-05-01 22:01:00,278 beta")));
-        assert!(second_page.iter().any(|line| line.contains("3 | 2026-05-01 22:01:00,303 gamma")));
+        assert_eq!(first_page.rows[0].line_number.as_deref(), Some("1"));
+        assert!(first_page.rows[0].content.contains("2026-05-01 22:01:00,253 alpha"));
+        assert_eq!(first_page.rows[1].line_number.as_deref(), Some("2"));
+        assert!(first_page.rows[1].content.contains("2026-05-01 22:01:00,278 beta"));
+        assert!(!first_page.rows.iter().any(|row| row.content.contains("gamma")));
+        assert_eq!(second_page.rows[0].line_number.as_deref(), Some("2"));
+        assert_eq!(second_page.rows[1].line_number.as_deref(), Some("3"));
+        assert!(second_page.rows[1].content.contains("2026-05-01 22:01:00,303 gamma"));
 
         fs::remove_file(path).expect("cleanup file");
     }
@@ -322,11 +341,16 @@ mod tests {
 
         let session =
             InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 4).expect("open session");
-        let rendered = session.render_lines(8, 24).expect("render wrapped page");
+        let rendered = session.render_frame(8, 24).expect("render wrapped page");
 
-        assert!(rendered.iter().any(|line| line.contains("1 | 2026-05-01 22:0")));
-        assert!(rendered.iter().any(|line| line.contains("| 253 alpha beta")));
-        assert!(rendered.iter().any(|line| line.contains("| gamma delta")));
+        assert_eq!(rendered.rows[0].line_number.as_deref(), Some("1"));
+        assert!(rendered.rows[0].content.contains("2026-05-01 22:0"));
+        assert_eq!(rendered.rows[1].line_number, None);
+        assert!(!rendered.rows[1].content.is_empty());
+        assert!(rendered
+            .rows
+            .iter()
+            .any(|row| row.line_number.is_none() && row.content.contains("gamma delta")));
 
         fs::remove_file(path).expect("cleanup file");
     }
