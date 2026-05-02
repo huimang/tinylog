@@ -53,19 +53,22 @@ impl InteractiveViewerSession {
     pub fn render_lines(&self, height: usize) -> Result<Vec<String>, String> {
         let visible_count = self.visible_count(height);
         let window = format::read_visible_window(&self.log_file, self.top_index, visible_count)?;
+        let line_number_width = self.total_records.to_string().len().max(1);
         let mut lines = Vec::new();
         lines.push(format!(
-            "tinylog viewer | file={} | records={} | line={} | j/k move  d/u page  g/G ends  q quit",
+            "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
             self.log_file,
             window.total_records,
             self.top_index.saturating_add(1)
         ));
         lines.push(String::new());
-        for entry in window.visible_entries {
+        for (index, entry) in window.visible_entries.into_iter().enumerate() {
             lines.push(format!(
-                "{} {}",
+                "{:>width$} {} {}",
+                self.top_index.saturating_add(index).saturating_add(1),
                 format::format_timestamp_millis(entry.timestamp_millis)?,
-                entry.content
+                entry.content,
+                width = line_number_width
             ));
         }
         let remaining = self.visible_count(height).saturating_sub(lines.len().saturating_sub(2));
@@ -98,6 +101,13 @@ impl InteractiveViewerSession {
     pub fn page_up(&mut self, height: usize) {
         let page = self.visible_count(height).max(1);
         self.top_index = self.top_index.saturating_sub(page);
+    }
+
+    /// Moves the window down by one quarter of the current page.
+    pub fn quarter_page_down(&mut self, height: usize) {
+        let step = (self.visible_count(height).max(1) / 4).max(1);
+        let max_top = self.total_records.saturating_sub(1);
+        self.top_index = usize::min(self.top_index.saturating_add(step), max_top);
     }
 
     /// Moves the window to the first record.
@@ -187,11 +197,11 @@ mod tests {
         session.move_down();
         let second_page = session.render_lines(4).expect("render second page");
 
-        assert!(first_page.iter().any(|line| line.contains("alpha")));
-        assert!(first_page.iter().any(|line| line.contains("beta")));
+        assert!(first_page.iter().any(|line| line.contains("1 2026-05-01 22:01:00,253 alpha")));
+        assert!(first_page.iter().any(|line| line.contains("2 2026-05-01 22:01:00,278 beta")));
         assert!(!first_page.iter().any(|line| line.contains("gamma")));
-        assert!(second_page.iter().any(|line| line.contains("beta")));
-        assert!(second_page.iter().any(|line| line.contains("gamma")));
+        assert!(second_page.iter().any(|line| line.contains("2 2026-05-01 22:01:00,278 beta")));
+        assert!(second_page.iter().any(|line| line.contains("3 2026-05-01 22:01:00,303 gamma")));
 
         fs::remove_file(path).expect("cleanup file");
     }
@@ -213,6 +223,26 @@ mod tests {
 
         assert_eq!(session.top_index(), 1);
         assert_eq!(session.total_records(), 3);
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
+    fn quarter_page_down_moves_by_one_quarter_screen() {
+        let path = std::env::temp_dir().join(format!(
+            "tinylog-session-quarter-{}.tog",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::write(&path, sample_bytes()).expect("write prototype file");
+
+        let mut session =
+            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8).expect("open session");
+        session.quarter_page_down(10);
+
+        assert_eq!(session.top_index(), 2);
 
         fs::remove_file(path).expect("cleanup file");
     }

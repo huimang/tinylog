@@ -180,6 +180,7 @@ Key bindings:
 ```text
 j / DownArrow   move down
 k / UpArrow     move up
+Enter           move down by 1/4 page
 d / PageDown    page down
 u / PageUp      page up
 g               jump to top
@@ -190,11 +191,11 @@ q               quit
 Expected screen content:
 
 ```text
-tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  d/u page  g/G ends  q quit
+tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
 
-2026-05-01 22:01:00,253 service started
-2026-05-01 22:01:00,278 user signed in
-2026-05-01 22:01:00,353 order created
+1 2026-05-01 22:01:00,253 service started
+2 2026-05-01 22:01:00,278 user signed in
+3 2026-05-01 22:01:00,353 order created
 ```
 
 The viewer stays open like a lightweight vim-style browser. It only reads and decodes the currently visible page of records. Records outside the visible window are left untouched until they are needed.
