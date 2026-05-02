@@ -2,7 +2,7 @@ use crate::format;
 
 const HEADER_HEIGHT: usize = 1;
 const MIN_LINE_NUMBER_WIDTH: usize = 6;
-const FOCUS_MARKER_OFFSET_WIDTH: usize = 1;
+const FOCUS_MARKER_OFFSET_WIDTH: usize = 0;
 const FOCUS_MARKER_WIDTH: usize = 1;
 const CONTENT_PADDING_WIDTH: usize = 0;
 

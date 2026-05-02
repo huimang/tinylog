@@ -193,7 +193,7 @@ q               quit
 ```text
 tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
 
-1 ▪2026-05-01 22:01:00,253 service started
+1▏2026-05-01 22:01:00,253 service started
 2  2026-05-01 22:01:00,278 user signed in
 3  2026-05-01 22:01:00,353 order created
 ```

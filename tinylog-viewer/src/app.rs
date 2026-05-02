@@ -17,8 +17,8 @@ const CURRENT_MARKER_COLOR: Color = Color::Rgb {
     g: 196,
     b: 128,
 };
-const FOCUS_MARKER_OFFSET: &str = " ";
-const CURRENT_ROW_MARKER: &str = "▪";
+const FOCUS_MARKER_OFFSET: &str = "";
+const CURRENT_ROW_MARKER: &str = "▏";
 const INACTIVE_ROW_MARKER: &str = " ";
 const CONTENT_PADDING: &str = "";
 
