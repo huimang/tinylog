@@ -53,7 +53,6 @@ impl InteractiveViewerSession {
     pub fn render_lines(&self, height: usize) -> Result<Vec<String>, String> {
         let visible_count = self.visible_count(height);
         let window = format::read_visible_window(&self.log_file, self.top_index, visible_count)?;
-        let line_number_width = self.total_records.to_string().len().max(1);
         let mut lines = Vec::new();
         lines.push(format!(
             "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
@@ -64,11 +63,10 @@ impl InteractiveViewerSession {
         lines.push(String::new());
         for (index, entry) in window.visible_entries.into_iter().enumerate() {
             lines.push(format!(
-                "{:>width$} {} {}",
+                "{} {} {}",
                 self.top_index.saturating_add(index).saturating_add(1),
                 format::format_timestamp_millis(entry.timestamp_millis)?,
-                entry.content,
-                width = line_number_width
+                entry.content
             ));
         }
         let remaining = self.visible_count(height).saturating_sub(lines.len().saturating_sub(2));
