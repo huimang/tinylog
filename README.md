@@ -1,11 +1,11 @@
 # tinylog
 
+[中文版说明](README.zh-CN.md)
+
 `tinylog` is a project scaffold for **high-density log storage** and **low-memory log access**.
 It targets the two main pain points of traditional plaintext logging: excessive storage cost and expensive traversal of very large files.
 
-> 中文支持：仓库文档以英文为主，允许补充中文说明；关键约定会尽量保持中英文都容易理解。
-
-## Vision / 项目目标
+## Vision
 
 Traditional logs are usually stored as plaintext. That creates two systemic issues:
 
@@ -17,7 +17,7 @@ The project is initialized around two product surfaces:
 1. **Java SDK** for application integration, with business-facing logging APIs similar in role to `slf4j`.
 2. **Rust viewer** for opening and navigating proprietary tinylog files with a `vim`-like workflow for browsing, searching, and positioning.
 
-## Modules / 模块划分
+## Modules
 
 | Module | Responsibility |
 | --- | --- |
@@ -25,9 +25,9 @@ The project is initialized around two product surfaces:
 | `tinylog-sdk` | Business-facing Java logging API, logger factories, and SLF4J 2.0.17 bridge support |
 | `tinylog-viewer` | Rust CLI scaffold for browsing proprietary tinylog files |
 
-## Engineering Guidelines / 工程准则
+## Engineering Guidelines
 
-### 1. Interface design is business-first / 接口设计强调业务语义
+### 1. Interface design is business-first
 
 Public interfaces should be named and shaped around **business capabilities**, not around storage engines, codecs, buffers, or transport details.
 
@@ -35,7 +35,7 @@ Public interfaces should be named and shaped around **business capabilities**, n
 - Avoid leaking implementation detail into business-facing APIs
 - Keep interfaces abstract enough to support multiple backends and file formats
 
-### 2. Modules must be independent and self-contained / 模块必须独立自洽
+### 2. Modules must be independent and self-contained
 
 Each module should have a clear boundary, a coherent responsibility, and minimal cross-module assumptions.
 
@@ -44,7 +44,7 @@ Each module should have a clear boundary, a coherent responsibility, and minimal
 - `tinylog-viewer` evolves independently as a dedicated client
 - Cross-module dependencies should remain explicit and minimal
 
-### 3. Code should be commented by default / 原则上代码需要提供注释
+### 3. Code should be commented by default
 
 Code should include comments or doc comments unless the intent is completely obvious.
 
@@ -52,13 +52,13 @@ Code should include comments or doc comments unless the intent is completely obv
 - Keep comments concise and durable
 - Prefer API-level comments for public types and methods
 
-### 4. Documentation is English-first, with Chinese support / 文档以英文为主，支持中文
+### 4. Documentation is language-separated
 
-- New project-facing documentation should be primarily written in English
-- Chinese can be added for clarification where it improves collaboration
+- The root README should stay English-only
+- Chinese project-facing documentation should live in standalone Chinese files
 - API names and code symbols should remain stable and language-neutral
 
-### 5. Commit metadata conventions / 提交规范
+### 5. Commit metadata conventions
 
 - **Author** should be the repository owner
 - **Committer** can be a dedicated AI identity configured locally
@@ -81,7 +81,7 @@ Recommended workflow:
 3. Create exactly one commit for that feature
 4. If multiple intermediate commits exist, reset back to the feature start and recombine them into one clean commit
 
-## Current Technical Direction / 当前技术方向
+## Current Technical Direction
 
 - **Java namespace**: `com.huimang.tinylog`
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
@@ -90,7 +90,7 @@ Recommended workflow:
 - **Storage redesign draft (EN)**: `docs/log-storage-structure.md`
 - **Storage redesign draft (ZH-CN)**: `docs/zh-CN/log-storage-structure.md`
 
-## Prototype File Format / 当前原型格式
+## Prototype File Format
 
 The current prototype uses a **trunk-based** binary layout in **big-endian** order.
 
@@ -136,7 +136,7 @@ Compression algorithm IDs:
 | `6` | zstd |
 | `7` | snappy |
 
-## Manual Prototype Testing / 手动测试命令
+## Manual Prototype Testing
 
 The current prototype accepts plaintext log lines in this format:
 
@@ -206,7 +206,7 @@ The viewer stays open like a lightweight vim-style browser. The display area is 
 mvn -q -pl tinylog-core -Dtest=PlainTextLogToTinylogConverterTest test
 ```
 
-## Near-Term Roadmap / 下一阶段建议
+## Near-Term Roadmap
 
 1. Define the tinylog file header, block layout, and index structure
 2. Implement streaming writer/reader paths and compression codecs
