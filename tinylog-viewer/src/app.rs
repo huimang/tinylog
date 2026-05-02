@@ -3,7 +3,7 @@ use crate::session::InteractiveViewerSession;
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
-use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use crossterm::terminal::{self, ClearType};
 use std::io::{self, Write};
 
@@ -142,19 +142,22 @@ impl ViewerApplication {
         .map_err(|error| format!("failed to write line-number pane: {error}"))?;
         execute!(stdout, ResetColor).map_err(|error| format!("failed to reset color: {error}"))?;
         execute!(stdout, cursor::MoveTo(line_number_width as u16, row))
-            .map_err(|error| format!("failed to move to pane separator: {error}"))?;
-        write!(stdout, " │ ").map_err(|error| format!("failed to write pane separator: {error}"))?;
-        execute!(stdout, cursor::MoveTo((line_number_width + 3) as u16, row))
-            .map_err(|error| format!("failed to move to content pane: {error}"))?;
+            .map_err(|error| format!("failed to move to current-row marker: {error}"))?;
         if is_current {
-            execute!(stdout, SetBackgroundColor(Color::Rgb { r: 12, g: 12, b: 12 }))
-                .map_err(|error| format!("failed to set current-row background: {error}"))?;
-            write!(stdout, "{content:<width$}", width = content_width)
-                .map_err(|error| format!("failed to write highlighted content pane: {error}"))?;
+            execute!(stdout, SetForegroundColor(Color::Rgb { r: 255, g: 196, b: 128 }))
+                .map_err(|error| format!("failed to set current-row marker color: {error}"))?;
+            write!(stdout, ">").map_err(|error| format!("failed to write current-row marker: {error}"))?;
             execute!(stdout, ResetColor).map_err(|error| format!("failed to reset color: {error}"))?;
         } else {
-            write!(stdout, "{content}").map_err(|error| format!("failed to write content pane: {error}"))?;
+            write!(stdout, " ").map_err(|error| format!("failed to clear current-row marker: {error}"))?;
         }
+        execute!(stdout, cursor::MoveTo((line_number_width + 1) as u16, row))
+            .map_err(|error| format!("failed to move to content pane: {error}"))?;
+        write!(stdout, " ").map_err(|error| format!("failed to write content padding: {error}"))?;
+        execute!(stdout, cursor::MoveTo((line_number_width + 2) as u16, row))
+            .map_err(|error| format!("failed to move to padded content pane: {error}"))?;
+        write!(stdout, "{content:<width$}", width = content_width)
+            .map_err(|error| format!("failed to write content pane: {error}"))?;
         Ok(())
     }
 }

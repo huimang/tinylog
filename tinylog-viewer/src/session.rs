@@ -77,11 +77,10 @@ impl InteractiveViewerSession {
     /// Renders the current visible window into a split-pane frame.
     pub fn render_frame(&mut self, height: usize, width: usize) -> Result<RenderedFrame, String> {
         let line_number_width = self.total_records.to_string().len().max(6);
-        let content_width = width.saturating_sub(line_number_width + 3).max(1);
+        let content_width = width.saturating_sub(line_number_width + 2).max(1);
         let visible_row_capacity = height.saturating_sub(1);
         let visible_record_count = self.visible_record_count(height);
-        let focus_row_index = self.focus_row_index(visible_row_capacity);
-        self.top_index = self.resolve_top_index(content_width, focus_row_index)?;
+        self.top_index = self.resolve_top_index(content_width, visible_row_capacity, visible_record_count)?;
         let mut rows = Vec::new();
         let mut rendered_record_count = 0usize;
         let header = format!(
@@ -181,12 +180,6 @@ impl InteractiveViewerSession {
         usize::min(self.preferred_page_size, terminal_page).max(1)
     }
 
-    /// Returns the preferred physical row for the focused line inside the content area.
-    fn focus_row_index(&self, visible_row_capacity: usize) -> usize {
-        let last_row_index = visible_row_capacity.saturating_sub(1);
-        usize::min(4, last_row_index / 2)
-    }
-
     /// Formats one logical entry into wrapped content rows.
     fn rendered_content_for_entry(&self, logical_index: usize, content_width: usize) -> Result<Vec<String>, String> {
         let window = format::read_visible_window(&self.log_file, logical_index, 1)?;
@@ -205,19 +198,40 @@ impl InteractiveViewerSession {
         ))
     }
 
-    /// Finds the first logical entry to show so the focused line lands on the target physical row.
-    fn resolve_top_index(&self, content_width: usize, focus_row_index: usize) -> Result<usize, String> {
-        let mut top_index = self.current_index;
-        let mut occupied_rows = 0usize;
-        while top_index > 0 {
-            let candidate_index = top_index.saturating_sub(1);
-            let candidate_rows = self.rendered_content_for_entry(candidate_index, content_width)?.len();
-            if occupied_rows.saturating_add(candidate_rows) > focus_row_index {
-                break;
-            }
-            occupied_rows = occupied_rows.saturating_add(candidate_rows);
-            top_index = candidate_index;
+    /// Keeps the current row inside the viewport and only scrolls once it would cross an edge.
+    fn resolve_top_index(
+        &self,
+        content_width: usize,
+        visible_row_capacity: usize,
+        visible_record_count: usize,
+    ) -> Result<usize, String> {
+        let mut top_index = if self.current_index < self.top_index {
+            self.current_index
+        } else {
+            self.top_index
+        };
+
+        let min_top_for_current = self
+            .current_index
+            .saturating_add(1)
+            .saturating_sub(visible_record_count.max(1));
+        if top_index < min_top_for_current {
+            top_index = min_top_for_current;
         }
+
+        let last_row_index = visible_row_capacity.saturating_sub(1);
+        let mut rows_before_current = 0usize;
+        for logical_index in top_index..self.current_index {
+            rows_before_current = rows_before_current
+                .saturating_add(self.rendered_content_for_entry(logical_index, content_width)?.len());
+        }
+
+        while rows_before_current > last_row_index && top_index < self.current_index {
+            let top_rows = self.rendered_content_for_entry(top_index, content_width)?.len();
+            rows_before_current = rows_before_current.saturating_sub(top_rows);
+            top_index = top_index.saturating_add(1);
+        }
+
         Ok(top_index)
     }
 }
@@ -373,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn move_down_keeps_focus_at_fifth_physical_row_once_reached() {
+    fn move_down_scrolls_only_after_current_row_hits_bottom_edge() {
         let path = std::env::temp_dir().join(format!(
             "tinylog-session-focus-{}.tog",
             SystemTime::now()
@@ -402,19 +416,19 @@ mod tests {
 
         let mut session =
             InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8).expect("open session");
-        for _ in 0..4 {
-            session.move_down(10);
+        for _ in 0..3 {
+            session.move_down(5);
         }
-        let anchored_frame = session.render_frame(10, 80).expect("render anchored page");
-        session.move_down(10);
-        let scrolled_frame = session.render_frame(10, 80).expect("render scrolled page");
+        let bottom_frame = session.render_frame(5, 80).expect("render bottom edge page");
+        session.move_down(5);
+        let scrolled_frame = session.render_frame(5, 80).expect("render scrolled page");
 
-        assert_eq!(session.current_index(), 5);
+        assert_eq!(session.current_index(), 4);
         assert_eq!(session.top_index(), 1);
-        assert_eq!(anchored_frame.rows[4].line_number.as_deref(), Some("5"));
-        assert!(anchored_frame.rows[4].is_current);
-        assert_eq!(scrolled_frame.rows[4].line_number.as_deref(), Some("6"));
-        assert!(scrolled_frame.rows[4].is_current);
+        assert_eq!(bottom_frame.rows[3].line_number.as_deref(), Some("4"));
+        assert!(bottom_frame.rows[3].is_current);
+        assert_eq!(scrolled_frame.rows[3].line_number.as_deref(), Some("5"));
+        assert!(scrolled_frame.rows[3].is_current);
 
         fs::remove_file(path).expect("cleanup file");
     }
