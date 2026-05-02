@@ -18,7 +18,9 @@ Each module should have a clear boundary, a coherent responsibility, and minimal
 
 - `tinylog-core` defines the shared contracts
 - `tinylog-sdk` focuses on application integration
-- `tinylog-viewer` evolves independently as a dedicated client
+- `tinylog-rust-common` keeps shared Rust format and contract code isolated
+- `tinylog-converter` owns plaintext-to-TinyLog conversion
+- `tinylog-viewer` owns interactive browsing
 - Cross-module dependencies should remain explicit and minimal
 
 ### 3. Code should be commented by default

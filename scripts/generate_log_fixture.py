@@ -43,7 +43,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--converter-command",
         nargs="+",
-        help="Command used to convert the generated plaintext log to .tog, for example: cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- convert",
+        help="Command used to convert the generated plaintext log to .tog, for example: cargo run --quiet --manifest-path tinylog-converter/Cargo.toml --",
     )
     parser.add_argument(
         "--converter-jar",

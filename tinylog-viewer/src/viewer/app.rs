@@ -1,6 +1,5 @@
-use crate::{
+use crate::viewer::{
     config::ViewerConfig,
-    format,
     session::{
         InteractiveViewerSession, RenderedFrame, RenderedRow, RowFocus, SearchProgressAction, ViewerSession,
     },
@@ -14,6 +13,7 @@ use crossterm::{
 };
 use std::io::{self, Write};
 use std::time::Duration;
+use tinylog_rust_common::format;
 
 const LINE_JUMP_COMMAND_PREFIX: &str = ":";
 const SEARCH_COMMAND_PREFIX: &str = "/";
@@ -269,7 +269,7 @@ impl ViewerApplication {
         &self,
         session: &InteractiveViewerSession,
         keyword: &str,
-        progress: crate::session::SearchProgress,
+        progress: crate::viewer::session::SearchProgress,
         width: usize,
         stdout: &mut io::Stdout,
         status_message: &mut Option<String>,
@@ -306,7 +306,7 @@ impl ViewerApplication {
         &self,
         session: &InteractiveViewerSession,
         level_name: &str,
-        progress: crate::session::SearchProgress,
+        progress: crate::viewer::session::SearchProgress,
         width: usize,
         stdout: &mut io::Stdout,
         status_message: &mut Option<String>,
@@ -700,7 +700,7 @@ mod tests {
     use super::{
         parse_level_filter_command, parse_line_jump_command, parse_search_command, ViewerApplication,
     };
-    use crate::config::ViewerConfig;
+    use crate::viewer::config::ViewerConfig;
 
     #[test]
     fn banner_contains_target_file_when_provided() {

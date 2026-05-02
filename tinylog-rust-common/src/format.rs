@@ -54,7 +54,7 @@ struct FileHeader {
 
 /// Caches the persisted trunk metadata needed for fast window reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TinylogFileIndex {
+pub struct TinylogFileIndex {
     path: String,
     header: FileHeader,
     trunks: Vec<TrunkLocation>,
@@ -72,17 +72,17 @@ struct TrunkLocation {
 #[allow(dead_code)]
 impl TinylogFileIndex {
     /// Returns the total persisted logical record count.
-    pub(crate) fn total_records(&self) -> u64 {
+    pub fn total_records(&self) -> u64 {
         self.header.total_records
     }
 
     /// Returns the total persisted trunk count.
-    pub(crate) fn trunk_count(&self) -> usize {
+    pub fn trunk_count(&self) -> usize {
         self.trunks.len()
     }
 
     /// Returns the 1-based trunk position that owns the provided logical record index.
-    pub(crate) fn trunk_position_for_record(&self, record_index: usize) -> Option<usize> {
+    pub fn trunk_position_for_record(&self, record_index: usize) -> Option<usize> {
         self.trunks.iter().enumerate().find_map(|(index, trunk)| {
             let trunk_end = trunk.record_start_index.saturating_add(trunk.line_count);
             if record_index >= trunk.record_start_index && record_index < trunk_end {
@@ -94,12 +94,12 @@ impl TinylogFileIndex {
     }
 
     /// Returns the logical record start index for one trunk.
-    pub(crate) fn trunk_record_start(&self, trunk_index: usize) -> Option<usize> {
+    pub fn trunk_record_start(&self, trunk_index: usize) -> Option<usize> {
         self.trunks.get(trunk_index).map(|trunk| trunk.record_start_index)
     }
 
     /// Returns the zero-based trunk index that owns the provided logical record index.
-    pub(crate) fn trunk_index_for_record(&self, record_index: usize) -> Option<usize> {
+    pub fn trunk_index_for_record(&self, record_index: usize) -> Option<usize> {
         self.trunks.iter().position(|trunk| {
             let trunk_end = trunk.record_start_index.saturating_add(trunk.line_count);
             record_index >= trunk.record_start_index && record_index < trunk_end
@@ -223,7 +223,7 @@ fn read_header_from_cursor(cursor: &mut CursorReader<'_>) -> Result<FileHeader, 
 }
 
 /// Builds the in-memory trunk index by scanning trunk headers once without decompressing payloads.
-pub(crate) fn scan_file_index(path: &str) -> Result<TinylogFileIndex, String> {
+pub fn scan_file_index(path: &str) -> Result<TinylogFileIndex, String> {
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
     let header = read_header_from_reader(&mut reader)?;
@@ -260,7 +260,7 @@ pub(crate) fn scan_file_index(path: &str) -> Result<TinylogFileIndex, String> {
 }
 
 /// Reads one visible window from a previously scanned trunk index.
-pub(crate) fn read_visible_window_from_index(
+pub fn read_visible_window_from_index(
     index: &TinylogFileIndex,
     start_index: usize,
     visible_count: usize,
@@ -307,7 +307,7 @@ pub(crate) fn read_visible_window_from_index(
 }
 
 /// Reads the final visible window from a previously scanned trunk index.
-pub(crate) fn read_last_window_from_index(
+pub fn read_last_window_from_index(
     index: &TinylogFileIndex,
     visible_count: usize,
 ) -> Result<VisibleLogWindow, String> {
@@ -318,7 +318,7 @@ pub(crate) fn read_last_window_from_index(
 
 /// Reads and parses one cached trunk by its zero-based index.
 #[allow(dead_code)]
-pub(crate) fn read_trunk_entries(
+pub fn read_trunk_entries(
     index: &TinylogFileIndex,
     trunk_index: usize,
 ) -> Result<Vec<ParsedLogEntry>, String> {
@@ -333,7 +333,7 @@ pub(crate) fn read_trunk_entries(
 
 /// Scans trunks in the provided order and exposes their decompressed logical entries.
 #[allow(dead_code)]
-pub(crate) fn scan_trunks_in_order<V>(
+pub fn scan_trunks_in_order<V>(
     index: &TinylogFileIndex,
     trunk_order: &[usize],
     mut visit_trunk: V,
@@ -439,7 +439,7 @@ fn parse_raw_trunk_payload(
 
 impl LogLevel {
     /// Resolves one persisted one-byte level identifier.
-    pub(crate) fn from_id(id: u8) -> Result<Self, String> {
+    pub fn from_id(id: u8) -> Result<Self, String> {
         match id {
             0 => Ok(Self::Trace),
             1 => Ok(Self::Debug),
@@ -463,7 +463,7 @@ impl LogLevel {
 
     /// Returns the lowercase name used by viewer commands.
     #[allow(dead_code)]
-    pub(crate) fn command_name(self) -> &'static str {
+    pub fn command_name(self) -> &'static str {
         match self {
             Self::Trace => "trace",
             Self::Debug => "debug",
@@ -474,7 +474,7 @@ impl LogLevel {
     }
 
     /// Parses one plaintext token into the structured level.
-    pub(crate) fn parse_token(token: &str) -> Option<Self> {
+    pub fn parse_token(token: &str) -> Option<Self> {
         match token.trim().to_ascii_uppercase().as_str() {
             "TRACE" => Some(Self::Trace),
             "DEBUG" => Some(Self::Debug),
@@ -487,7 +487,7 @@ impl LogLevel {
     }
 
     /// Returns the persisted one-byte identifier.
-    pub(crate) fn to_persisted_id(self) -> u8 {
+    pub fn to_persisted_id(self) -> u8 {
         match self {
             Self::Trace => 0,
             Self::Debug => 1,
@@ -500,7 +500,7 @@ impl LogLevel {
 
 impl CompressionAlgorithm {
     /// Resolves one persisted algorithm identifier.
-    pub(crate) fn from_id(id: u16) -> Result<Self, String> {
+    pub fn from_id(id: u16) -> Result<Self, String> {
         match id {
             0 => Ok(Self::None),
             1 => Ok(Self::Gzip),
@@ -515,7 +515,7 @@ impl CompressionAlgorithm {
     }
 
     /// Returns the persisted two-byte algorithm identifier.
-    pub(crate) fn id(self) -> u16 {
+    pub fn id(self) -> u16 {
         match self {
             Self::None => 0,
             Self::Gzip => 1,
@@ -529,7 +529,7 @@ impl CompressionAlgorithm {
     }
 
     /// Returns the stable display name used by the CLI.
-    pub(crate) fn display_name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Gzip => "gzip",
@@ -571,7 +571,7 @@ impl CompressionAlgorithm {
     }
 
     /// Compresses one raw trunk payload according to the selected header algorithm.
-    pub(crate) fn compress(self, payload: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn compress(self, payload: &[u8]) -> Result<Vec<u8>, String> {
         match self {
             Self::None => Ok(payload.to_vec()),
             Self::Gzip => {

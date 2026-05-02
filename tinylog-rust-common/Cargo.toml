@@ -1,0 +1,20 @@
+[package]
+name = "tinylog-rust-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared Rust format and protobuf support for TinyLog"
+
+[dependencies]
+bzip2 = "0.5.2"
+chrono = "0.4.38"
+flate2 = "1.0.34"
+prost = "0.13.5"
+snap = "1.1.1"
+xz2 = "0.1.7"
+zstd = "0.13.2"
+zip = "2.4.2"
+
+[build-dependencies]
+prost-build = "0.13.5"
+protoc-bin-vendored = "3.1.0"

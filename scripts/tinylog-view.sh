@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Open a .tog file in the Rust TinyLog viewer.
+# Open a .tog file through the Rust workspace viewer crate.
 
 usage() {
     cat <<'EOF'

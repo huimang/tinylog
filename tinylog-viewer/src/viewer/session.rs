@@ -1,4 +1,4 @@
-use crate::format;
+use tinylog_rust_common::format;
 
 const HEADER_HEIGHT: usize = 1;
 const MIN_LINE_NUMBER_WIDTH: usize = 6;
@@ -1108,8 +1108,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::format::LogLevel;
-    use crate::session::{
+    use tinylog_rust_common::format::LogLevel;
+    use crate::viewer::session::{
         InteractiveViewerSession, RowFocus, SearchProgress, SearchProgressAction, ViewerSession,
     };
 

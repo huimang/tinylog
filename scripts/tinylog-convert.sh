@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Convert a plaintext log into a .tog file through the Rust TinyLog converter.
+# Convert a plaintext log into a .tog file through the Rust workspace converter crate.
 
 usage() {
     cat <<'EOF'
@@ -28,7 +28,7 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-manifest_path="${repo_root}/tinylog-viewer/Cargo.toml"
+manifest_path="${repo_root}/tinylog-converter/Cargo.toml"
 
 input_path="$1"
 output_path="${2:-}"
@@ -53,7 +53,6 @@ command=(
     --manifest-path
     "${manifest_path}"
     --
-    convert
     "${input_path}"
     "${output_path}"
 )

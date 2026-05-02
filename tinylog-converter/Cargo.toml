@@ -1,10 +1,10 @@
 [package]
-name = "tinylog-viewer"
+name = "tinylog-converter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Rust CLI scaffold for browsing TinyLog files"
+description = "Rust CLI for converting plaintext logs into TinyLog files"
 
 [dependencies]
-crossterm = "0.28.1"
+chrono = "0.4.38"
 tinylog-rust-common = { path = "../tinylog-rust-common" }

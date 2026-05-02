@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Convert a plaintext log into .tog and immediately open it in the viewer.
+# Convert a plaintext log through the Rust workspace converter crate and open it in the viewer crate.
 
 usage() {
     cat <<'EOF'
