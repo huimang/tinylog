@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>tinylog-sdk</artifactId>
-    <name>tinylog-sdk</name>
+    <name>TinyLog SDK</name>
 
     <dependencies>
         <dependency>

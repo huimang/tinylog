@@ -5,7 +5,7 @@ import org.slf4j.ILoggerFactory;
 import org.slf4j.LoggerFactory;
 
 /**
- * Resolves tinylog loggers from the SLF4J 2.x logging ecosystem.
+ * Resolves TinyLog loggers from the SLF4J 2.x logging ecosystem.
  */
 public final class Slf4jTinyLoggerFactory implements TinyLoggerFactory {
     private final ILoggerFactory delegate;

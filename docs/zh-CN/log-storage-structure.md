@@ -37,7 +37,6 @@
 | `baseTimestampUtcMillis` | 8 字节 |  | 文件级 UTC 基准时间戳（毫秒） |
 | `totalLogLineCount` | 8 字节 | 0 | 已持久化日志总行数 |
 | `trunkCount` | 3 字节 | 0 | 已写入主文件的 trunk 总数 |
-
 ### Header 布局
 
 ```text
@@ -83,7 +82,6 @@
 | `trunkLogLineCount` | 2 字节 | 当前 trunk 内的日志行数 |
 | `compressedContentLength` | 4 字节 | 压缩后 trunk 内容长度 |
 | `compressedContent` | N 字节 | 整个 trunk 的压缩内容 |
-
 ### Trunk 布局
 
 ```text
@@ -105,9 +103,9 @@
 ### 原始日志行布局
 
 ```text
-[offsetMillis:4][contentLength:4][content:N]
-[offsetMillis:4][contentLength:4][content:N]
-[offsetMillis:4][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
 ...
 ```
 
@@ -181,7 +179,7 @@ log-buffer-2.tmp
             v
 +----------------------------------------------+
 | 追加原始日志行                                |
-| offsetMillis + contentLength + content       |
+| offsetMillis + level + contentLength + content |
 +----------------------------------------------+
             |
             v
@@ -200,19 +198,14 @@ log-buffer-2.tmp
 +----------------------------------+ |
             |                       |
             v                       |
-+---------------------------------------------------------------+
++---------------------------------------------------+
 | 向主文件追加 trunkLogLineCount + compressedContentLength + 数据 |
-+---------------------------------------------------------------+
++---------------------------------------------------+
             |
             v
-+-------------------------------+
-| 更新 totalLogLineCount        |
-+-------------------------------+
-            |
-            v
-+-------------------------------+
-| 更新 trunkCount               |
-+-------------------------------+
++----------------------------------+
+| 更新 totalLogLineCount / trunkCount |
++----------------------------------+
             |
             v
 +-------------------------------+
@@ -234,7 +227,7 @@ log-buffer-2.tmp
 3. 每来一条日志：
    1. 解析明文日志时间
    2. 计算 `offsetMillis = lineTimestampUtcMillis - baseTimestampUtcMillis`
-   3. 向当前缓冲文件追加 `[offsetMillis:4][contentLength:4][content]`
+   3. 向当前缓冲文件追加 `[offsetMillis:4][level:1][contentLength:4][content]`
 4. 当缓冲文件达到 `trunkSizeKb` 阈值时：
    1. 读取整个缓冲文件原始内容
    2. 使用 header 指定的压缩算法压缩整个 trunk
@@ -301,12 +294,13 @@ log-buffer-2.tmp
 
 1. 读取固定 header
 2. 确定当前可见范围或查询范围
-3. 顺序跳过 trunk，直到找到目标 trunk
-4. 只读取目标 trunk 的压缩内容
-5. 只解压该 trunk
-6. 解析 trunk 内部的原始日志行
-7. 基于文件级 UTC 基准时间恢复实际时间
-8. 返回需要展示或查询的日志记录
+3. 打开文件时先快速扫描全部 trunk 的位置和行数，并缓存在内存中
+4. 基于内存索引定位目标 trunk
+5. 只读取目标 trunk 的压缩内容
+6. 只解压该 trunk
+7. 解析 trunk 内部的原始日志行
+8. 基于文件级 UTC 基准时间恢复实际时间
+9. 返回需要展示或查询的日志记录
 
 ## Viewer 侧预期
 
@@ -339,7 +333,7 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 
 1. Header 顺序固定为：`version -> compression -> trunkSizeKb -> baseTimestampUtcMillis -> totalLogLineCount -> trunkCount`
 2. 所有 trunk 共用一个文件级 UTC 基准时间戳
-3. trunk 内每行格式固定为：`[offsetMillis:4][contentLength:4][content]`
+3. trunk 内每行格式固定为：`[offsetMillis:4][level:1][contentLength:4][content]`
 4. trunk 格式固定为：`[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
 5. 默认压缩算法改回 `gzip`
 6. 缓冲文件命名固定为：`log-buffer-{trunkIndex}.tmp`

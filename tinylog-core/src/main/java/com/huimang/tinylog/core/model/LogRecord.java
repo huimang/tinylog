@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Represents one logical log event in the tinylog domain model.
+ * Represents one logical log event in the TinyLog domain model.
  */
 public final class LogRecord {
     private final long timestampMillis;

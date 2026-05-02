@@ -167,6 +167,7 @@ public final class PrototypeLogFileReader implements LogReader {
             List<LogRecord> records = new ArrayList<>(trunkLogLineCount);
             for (int index = 0; index < trunkLogLineCount; index++) {
                 long offsetMillis = PrototypeLogFileFormat.readUnsignedInt(trunkInput);
+                int persistedLevelId = trunkInput.readUnsignedByte();
                 int contentLength = trunkInput.readInt();
                 if (contentLength < 0) {
                     throw new IOException("raw log line content length must not be negative");
@@ -176,6 +177,7 @@ public final class PrototypeLogFileReader implements LogReader {
                 records.add(PrototypeLogFileFormat.toRecord(
                         baseTimestampUtcMillis,
                         offsetMillis,
+                        persistedLevelId,
                         new String(contentBytes, PrototypeLogFileFormat.CONTENT_CHARSET)));
             }
             if (trunkInput.available() != 0) {

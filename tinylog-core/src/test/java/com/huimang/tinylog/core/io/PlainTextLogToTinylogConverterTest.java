@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.huimang.tinylog.core.model.LogLevel;
 import com.huimang.tinylog.core.model.LogRecord;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -31,8 +32,8 @@ public class PlainTextLogToTinylogConverterTest {
         Files.write(
                 normalLogPath,
                 Arrays.asList(
-                        "2026-05-01 22:01:00,253 service started",
-                        "2026-05-01 22:01:00,278 user signed in"),
+                        "2026-05-01 22:01:00,253 [INFO] service started",
+                        "2026-05-01 22:01:00,278 [ERROR] user signed in"),
                 StandardCharsets.UTF_8);
 
         new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath);
@@ -45,6 +46,8 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals(2, records.size());
         assertEquals(toEpochMillis("2026-05-01 22:01:00,253"), records.get(0).getTimestampMillis());
         assertEquals(toEpochMillis("2026-05-01 22:01:00,278"), records.get(1).getTimestampMillis());
+        assertEquals(LogLevel.INFO, records.get(0).getLevel());
+        assertEquals(LogLevel.ERROR, records.get(1).getLevel());
         assertEquals("service started", records.get(0).getMessage());
         assertEquals("user signed in", records.get(1).getMessage());
         byte[] header = Files.readAllBytes(tinylogPath);
@@ -57,7 +60,7 @@ public class PlainTextLogToTinylogConverterTest {
         Path normalLogPath = tempDir.resolve("normal.log");
         Files.write(
                 normalLogPath,
-                Collections.singletonList("2026-05-01 22:01:00,253 service started"),
+                Collections.singletonList("2026-05-01 22:01:00,253 [INFO] service started"),
                 StandardCharsets.UTF_8);
 
         IllegalArgumentException error = assertThrows(
@@ -89,7 +92,7 @@ public class PlainTextLogToTinylogConverterTest {
         Path tinylogPath = tempDir.resolve("normal.tog");
         Files.write(
                 normalLogPath,
-                Collections.singletonList("2026-05-01 22:01:00,253 service started"),
+                Collections.singletonList("2026-05-01 22:01:00,253 [INFO] service started"),
                 StandardCharsets.UTF_8);
 
         new PlainTextLogToTinylogConverter(CompressionAlgorithm.ZSTD, 1024).convert(normalLogPath, tinylogPath);
@@ -98,6 +101,48 @@ public class PlainTextLogToTinylogConverterTest {
         assertEquals(CompressionAlgorithm.ZSTD.getId(), readAlgorithmId(header));
         assertEquals(1024, readTrunkSizeKb(header));
         assertTrue(header.length > PrototypeLogFileFormat.HEADER_BYTES);
+    }
+
+    @Test
+    void shouldStripFirstLevelTokenAndKeepRemainingBracketedContent() throws IOException {
+        Path normalLogPath = tempDir.resolve("normal.log");
+        Path tinylogPath = tempDir.resolve("normal.tog");
+        Files.write(
+                normalLogPath,
+                Collections.singletonList("2026-05-01 22:01:00,253 [WARN] [GID:] hello world"),
+                StandardCharsets.UTF_8);
+
+        new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath);
+
+        List<LogRecord> records;
+        try (PrototypeLogFileReader reader = new PrototypeLogFileReader(tinylogPath)) {
+            records = collect(reader.scan());
+        }
+
+        assertEquals(1, records.size());
+        assertEquals(LogLevel.WARN, records.get(0).getLevel());
+        assertEquals("[GID:] hello world", records.get(0).getMessage());
+    }
+
+    @Test
+    void shouldKeepLeadingBracketedTokenWhenItIsNotALevel() throws IOException {
+        Path normalLogPath = tempDir.resolve("normal.log");
+        Path tinylogPath = tempDir.resolve("normal.tog");
+        Files.write(
+                normalLogPath,
+                Collections.singletonList("2026-05-01 22:01:00,253 [GID:] hello world"),
+                StandardCharsets.UTF_8);
+
+        new PlainTextLogToTinylogConverter().convert(normalLogPath, tinylogPath);
+
+        List<LogRecord> records;
+        try (PrototypeLogFileReader reader = new PrototypeLogFileReader(tinylogPath)) {
+            records = collect(reader.scan());
+        }
+
+        assertEquals(1, records.size());
+        assertEquals(LogLevel.INFO, records.get(0).getLevel());
+        assertEquals("[GID:] hello world", records.get(0).getMessage());
     }
 
     /**

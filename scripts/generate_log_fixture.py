@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a large ordered plaintext log fixture and optionally convert it to tinylog."""
+"""Generate a large ordered plaintext log fixture and optionally convert it to TinyLog."""
 
 from __future__ import annotations
 
@@ -41,8 +41,13 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--tog-output", help="Optional path to the generated .tog output.")
     parser.add_argument(
+        "--converter-command",
+        nargs="+",
+        help="Command used to convert the generated plaintext log to .tog, for example: cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- convert",
+    )
+    parser.add_argument(
         "--converter-jar",
-        help="Path to the tinylog fat jar used to convert the generated plaintext log.",
+        help="Deprecated Java fat-jar path kept for backward compatibility.",
     )
     return parser.parse_args()
 
@@ -107,19 +112,30 @@ def generate_plaintext_log(
     return bytes_written
 
 
-def convert_to_tog(converter_jar: Path, log_output: Path, tog_output: Path) -> None:
-    """Convert the generated plaintext log to tinylog format using the existing fat jar."""
+def convert_to_tog(
+    log_output: Path,
+    tog_output: Path,
+    converter_command: list[str] | None,
+    converter_jar: Path | None,
+) -> None:
+    """Convert the generated plaintext log to TinyLog format using the configured converter command."""
     tog_output.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "java",
-            "-jar",
-            str(converter_jar),
-            str(log_output),
-            str(tog_output),
-        ],
-        check=True,
-    )
+    if converter_command:
+        subprocess.run([*converter_command, str(log_output), str(tog_output)], check=True)
+        return
+    if converter_jar:
+        subprocess.run(
+            [
+                "java",
+                "-jar",
+                str(converter_jar),
+                str(log_output),
+                str(tog_output),
+            ],
+            check=True,
+        )
+        return
+    raise ValueError("--converter-command or --converter-jar is required when --tog-output is provided")
 
 
 def main() -> None:
@@ -141,9 +157,13 @@ def main() -> None:
     print(f"generated {log_output} ({bytes_written} bytes)")
 
     if arguments.tog_output:
-        if not arguments.converter_jar:
-            raise ValueError("--converter-jar is required when --tog-output is provided")
-        convert_to_tog(Path(arguments.converter_jar), log_output, Path(arguments.tog_output))
+        converter_jar = Path(arguments.converter_jar) if arguments.converter_jar else None
+        convert_to_tog(
+            log_output=log_output,
+            tog_output=Path(arguments.tog_output),
+            converter_command=arguments.converter_command,
+            converter_jar=converter_jar,
+        )
         print(f"converted {log_output} to {arguments.tog_output}")
 
 

@@ -2,7 +2,7 @@
 name = "tinylog-viewer"
 version = "0.1.0"
 edition = "2021"
-description = "Rust CLI scaffold for browsing tinylog files"
+description = "Rust CLI scaffold for browsing TinyLog files"
 
 [dependencies]
 chrono = "0.4.38"

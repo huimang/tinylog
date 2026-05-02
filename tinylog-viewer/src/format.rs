@@ -1,13 +1,20 @@
 use std::{
     fs,
-    io::{BufReader, Cursor, Read},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom, Write},
 };
 
-use bzip2::read::BzDecoder;
+use bzip2::{read::BzDecoder, write::BzEncoder, Compression as BzCompression};
 use chrono::{TimeZone, Utc};
-use flate2::read::{DeflateDecoder, GzDecoder};
+use flate2::{
+    read::{DeflateDecoder, GzDecoder},
+    write::{DeflateEncoder, GzEncoder},
+    Compression as FlateCompression,
+};
 use snap::read::FrameDecoder;
+use snap::write::FrameEncoder;
+use zip::{write::SimpleFileOptions, ZipWriter};
 use xz2::read::XzDecoder;
+use xz2::write::XzEncoder;
 use zip::ZipArchive;
 
 /// Holds the total record count together with the currently visible entries.
@@ -17,12 +24,23 @@ pub struct VisibleLogWindow {
     pub visible_entries: Vec<ParsedLogEntry>,
 }
 
-/// Represents one rendered log entry parsed from the trunk-based tinylog format.
+/// Represents one rendered log entry parsed from the trunk-based TinyLog format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedLogEntry {
     pub timestamp_millis: u64,
     pub offset_millis: u32,
+    pub level: LogLevel,
     pub content: String,
+}
+
+/// Represents the persisted one-byte log level in trunk lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
 }
 
 /// Holds the parsed file header needed by the viewer.
@@ -34,9 +52,64 @@ struct FileHeader {
     trunk_count: u32,
 }
 
+/// Caches the persisted trunk metadata needed for fast window reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TinylogFileIndex {
+    path: String,
+    header: FileHeader,
+    trunks: Vec<TrunkLocation>,
+}
+
+/// Stores one persisted trunk offset together with its logical record range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrunkLocation {
+    start_offset: u64,
+    record_start_index: usize,
+    line_count: usize,
+    compressed_content_length: usize,
+}
+
+#[allow(dead_code)]
+impl TinylogFileIndex {
+    /// Returns the total persisted logical record count.
+    pub(crate) fn total_records(&self) -> u64 {
+        self.header.total_records
+    }
+
+    /// Returns the total persisted trunk count.
+    pub(crate) fn trunk_count(&self) -> usize {
+        self.trunks.len()
+    }
+
+    /// Returns the 1-based trunk position that owns the provided logical record index.
+    pub(crate) fn trunk_position_for_record(&self, record_index: usize) -> Option<usize> {
+        self.trunks.iter().enumerate().find_map(|(index, trunk)| {
+            let trunk_end = trunk.record_start_index.saturating_add(trunk.line_count);
+            if record_index >= trunk.record_start_index && record_index < trunk_end {
+                Some(index.saturating_add(1))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns the logical record start index for one trunk.
+    pub(crate) fn trunk_record_start(&self, trunk_index: usize) -> Option<usize> {
+        self.trunks.get(trunk_index).map(|trunk| trunk.record_start_index)
+    }
+
+    /// Returns the zero-based trunk index that owns the provided logical record index.
+    pub(crate) fn trunk_index_for_record(&self, record_index: usize) -> Option<usize> {
+        self.trunks.iter().position(|trunk| {
+            let trunk_end = trunk.record_start_index.saturating_add(trunk.line_count);
+            record_index >= trunk.record_start_index && record_index < trunk_end
+        })
+    }
+}
+
 /// Enumerates the supported trunk-level compression algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompressionAlgorithm {
+pub enum CompressionAlgorithm {
     None,
     Gzip,
     Zip,
@@ -47,82 +120,29 @@ enum CompressionAlgorithm {
     Snappy,
 }
 
-/// Reads and parses one trunk-based tinylog file from disk.
+/// Reads and parses one trunk-based TinyLog file from disk.
 #[allow(dead_code)]
 pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
     let bytes = fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     parse_bytes(&bytes)
 }
 
-/// Reads only the currently visible window from one trunk-based tinylog file.
+/// Reads only the currently visible window from one trunk-based TinyLog file.
+#[allow(dead_code)]
 pub fn read_visible_window(
     path: &str,
     start_index: usize,
     visible_count: usize,
 ) -> Result<VisibleLogWindow, String> {
-    let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
-    let mut reader = BufReader::new(file);
-    let header = read_header_from_reader(&mut reader)?;
-    let total_records_usize = usize::try_from(header.total_records).unwrap_or(usize::MAX);
-    let start_index = usize::min(start_index, total_records_usize);
-    let end_index = usize::min(
-        start_index.saturating_add(visible_count),
-        total_records_usize,
-    );
-    if start_index >= end_index {
-        return Ok(VisibleLogWindow {
-            total_records: header.total_records,
-            visible_entries: Vec::new(),
-        });
-    }
+    let index = scan_file_index(path)?;
+    read_visible_window_from_index(&index, start_index, visible_count)
+}
 
-    let mut visible_entries = Vec::with_capacity(end_index.saturating_sub(start_index));
-    let mut global_index = 0usize;
-
-    for _ in 0..header.trunk_count {
-        let trunk_log_line_count = usize::from(read_u16_from_reader(&mut reader)?);
-        let compressed_content_length = read_u32_from_reader(&mut reader)? as usize;
-        let trunk_start = global_index;
-        let trunk_end = global_index.saturating_add(trunk_log_line_count);
-        let overlaps_visible_window = trunk_end > start_index && trunk_start < end_index;
-
-        if !overlaps_visible_window {
-            skip_exact(&mut reader, compressed_content_length)?;
-            global_index = trunk_end;
-            continue;
-        }
-
-        let mut compressed_content = vec![0_u8; compressed_content_length];
-        reader
-            .read_exact(&mut compressed_content)
-            .map_err(|_| "prototype log file is truncated".to_string())?;
-        let raw_trunk_bytes = header
-            .compression_algorithm
-            .decompress(compressed_content)?;
-        let trunk_entries = parse_raw_trunk_payload(
-            &raw_trunk_bytes,
-            header.base_timestamp_millis,
-            trunk_log_line_count,
-        )?;
-        let local_start = start_index.saturating_sub(trunk_start);
-        let local_end = usize::min(trunk_entries.len(), end_index.saturating_sub(trunk_start));
-        for entry in trunk_entries
-            .into_iter()
-            .skip(local_start)
-            .take(local_end.saturating_sub(local_start))
-        {
-            visible_entries.push(entry);
-        }
-        global_index = trunk_end;
-        if visible_entries.len() >= end_index.saturating_sub(start_index) {
-            break;
-        }
-    }
-
-    Ok(VisibleLogWindow {
-        total_records: header.total_records,
-        visible_entries,
-    })
+/// Reads the final visible window from the cached in-memory trunk index.
+#[allow(dead_code)]
+pub fn read_last_window(path: &str, visible_count: usize) -> Result<VisibleLogWindow, String> {
+    let index = scan_file_index(path)?;
+    read_last_window_from_index(&index, visible_count)
 }
 
 /// Formats persisted UTC milliseconds as the human-readable normal log timestamp shape.
@@ -202,6 +222,193 @@ fn read_header_from_cursor(cursor: &mut CursorReader<'_>) -> Result<FileHeader, 
     })
 }
 
+/// Builds the in-memory trunk index by scanning trunk headers once without decompressing payloads.
+pub(crate) fn scan_file_index(path: &str) -> Result<TinylogFileIndex, String> {
+    let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let header = read_header_from_reader(&mut reader)?;
+    let mut trunks = Vec::with_capacity(usize::try_from(header.trunk_count).unwrap_or(0));
+    let mut record_start_index = 0usize;
+    let mut current_offset = read_header_size();
+
+    for _ in 0..header.trunk_count {
+        let trunk_log_line_count = usize::from(read_u16_from_reader(&mut reader)?);
+        let compressed_content_length = read_u32_from_reader(&mut reader)? as usize;
+        trunks.push(TrunkLocation {
+            start_offset: current_offset,
+            record_start_index,
+            line_count: trunk_log_line_count,
+            compressed_content_length,
+        });
+        skip_exact(&mut reader, compressed_content_length)?;
+        current_offset = current_offset
+            .saturating_add(2)
+            .saturating_add(4)
+            .saturating_add(u64::try_from(compressed_content_length).unwrap_or(u64::MAX));
+        record_start_index = record_start_index.saturating_add(trunk_log_line_count);
+    }
+
+    if record_start_index != usize::try_from(header.total_records).unwrap_or(usize::MAX) {
+        return Err("header total record count does not match scanned trunk index".to_string());
+    }
+
+    Ok(TinylogFileIndex {
+        path: path.to_string(),
+        header,
+        trunks,
+    })
+}
+
+/// Reads one visible window from a previously scanned trunk index.
+pub(crate) fn read_visible_window_from_index(
+    index: &TinylogFileIndex,
+    start_index: usize,
+    visible_count: usize,
+) -> Result<VisibleLogWindow, String> {
+    let total_records_usize = usize::try_from(index.header.total_records).unwrap_or(usize::MAX);
+    let start_index = usize::min(start_index, total_records_usize);
+    let end_index = usize::min(start_index.saturating_add(visible_count), total_records_usize);
+    if start_index >= end_index {
+        return Ok(VisibleLogWindow {
+            total_records: index.header.total_records,
+            visible_entries: Vec::new(),
+        });
+    }
+
+    let mut file = fs::File::open(&index.path)
+        .map_err(|error| format!("failed to read {}: {error}", index.path))?;
+    let mut visible_entries = Vec::with_capacity(end_index.saturating_sub(start_index));
+
+    for trunk in &index.trunks {
+        let trunk_start = trunk.record_start_index;
+        let trunk_end = trunk.record_start_index.saturating_add(trunk.line_count);
+        if trunk_end <= start_index {
+            continue;
+        }
+        if trunk_start >= end_index {
+            break;
+        }
+
+        let trunk_entries = read_trunk_at(&mut file, &index.header, trunk)?;
+        let local_start = start_index.saturating_sub(trunk_start);
+        let local_end = usize::min(trunk_entries.len(), end_index.saturating_sub(trunk_start));
+        visible_entries.extend(
+            trunk_entries
+                .into_iter()
+                .skip(local_start)
+                .take(local_end.saturating_sub(local_start)),
+        );
+    }
+
+    Ok(VisibleLogWindow {
+        total_records: index.header.total_records,
+        visible_entries,
+    })
+}
+
+/// Reads the final visible window from a previously scanned trunk index.
+pub(crate) fn read_last_window_from_index(
+    index: &TinylogFileIndex,
+    visible_count: usize,
+) -> Result<VisibleLogWindow, String> {
+    let total_records = usize::try_from(index.header.total_records).unwrap_or(usize::MAX);
+    let start_index = total_records.saturating_sub(visible_count);
+    read_visible_window_from_index(index, start_index, visible_count)
+}
+
+/// Reads and parses one cached trunk by its zero-based index.
+#[allow(dead_code)]
+pub(crate) fn read_trunk_entries(
+    index: &TinylogFileIndex,
+    trunk_index: usize,
+) -> Result<Vec<ParsedLogEntry>, String> {
+    let trunk = index
+        .trunks
+        .get(trunk_index)
+        .ok_or_else(|| format!("invalid trunk index: {trunk_index}"))?;
+    let mut file = fs::File::open(&index.path)
+        .map_err(|error| format!("failed to read {}: {error}", index.path))?;
+    read_trunk_at(&mut file, &index.header, trunk)
+}
+
+/// Scans trunks in the provided order and exposes their decompressed logical entries.
+#[allow(dead_code)]
+pub(crate) fn scan_trunks_in_order<V>(
+    index: &TinylogFileIndex,
+    trunk_order: &[usize],
+    mut visit_trunk: V,
+) -> Result<(), String>
+where
+    V: FnMut(usize, &[ParsedLogEntry]) -> Result<(), String>,
+{
+    if trunk_order.is_empty() {
+        return Ok(());
+    }
+
+    let mut file = fs::File::open(&index.path)
+        .map_err(|error| format!("failed to read {}: {error}", index.path))?;
+    for trunk_index in trunk_order {
+        let trunk = index
+            .trunks
+            .get(*trunk_index)
+            .ok_or_else(|| format!("invalid trunk index: {trunk_index}"))?;
+        let trunk_entries = read_trunk_at(&mut file, &index.header, trunk)?;
+        visit_trunk(*trunk_index, &trunk_entries)?;
+    }
+
+    Ok(())
+}
+
+/// Visits one logical range inside a decompressed trunk.
+#[allow(dead_code)]
+fn visit_entries_in_range<F>(
+    record_start_index: usize,
+    entries: &[ParsedLogEntry],
+    local_start: usize,
+    local_end: usize,
+    visit_entry: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(usize, &ParsedLogEntry) -> Result<(), String>,
+{
+    for (offset, entry) in entries
+        .iter()
+        .enumerate()
+        .skip(local_start)
+        .take(local_end.saturating_sub(local_start))
+    {
+        let logical_index = record_start_index.saturating_add(offset);
+        visit_entry(logical_index, entry)?;
+    }
+    Ok(())
+}
+
+/// Reads and parses one persisted trunk from a known byte offset.
+fn read_trunk_at(
+    file: &mut fs::File,
+    header: &FileHeader,
+    trunk: &TrunkLocation,
+) -> Result<Vec<ParsedLogEntry>, String> {
+    file.seek(SeekFrom::Start(trunk.start_offset))
+        .map_err(|error| format!("failed to seek to trunk start: {error}"))?;
+    let trunk_log_line_count = usize::from(read_u16_from_reader(file)?);
+    let compressed_content_length = read_u32_from_reader(file)? as usize;
+    if compressed_content_length != trunk.compressed_content_length {
+        return Err("cached trunk index does not match persisted trunk length".to_string());
+    }
+    let mut compressed_content = vec![0_u8; compressed_content_length];
+    file.read_exact(&mut compressed_content)
+        .map_err(|_| "prototype log file is truncated".to_string())?;
+    let raw_trunk_bytes = header
+        .compression_algorithm
+        .decompress(compressed_content)?;
+    parse_raw_trunk_payload(
+        &raw_trunk_bytes,
+        header.base_timestamp_millis,
+        trunk_log_line_count,
+    )
+}
+
 /// Parses one decompressed trunk payload into logical entries.
 fn parse_raw_trunk_payload(
     raw_trunk_bytes: &[u8],
@@ -212,6 +419,7 @@ fn parse_raw_trunk_payload(
     let mut entries = Vec::with_capacity(trunk_log_line_count);
     for _ in 0..trunk_log_line_count {
         let offset_millis = cursor.read_u32()?;
+        let level = LogLevel::from_id(cursor.read_u8()?)?;
         let content_length = cursor.read_u32()? as usize;
         let content_bytes = cursor.read_exact(content_length)?;
         let content = String::from_utf8(content_bytes.to_vec())
@@ -219,6 +427,7 @@ fn parse_raw_trunk_payload(
         entries.push(ParsedLogEntry {
             timestamp_millis: base_timestamp_millis + u64::from(offset_millis),
             offset_millis,
+            level,
             content,
         });
     }
@@ -228,9 +437,70 @@ fn parse_raw_trunk_payload(
     Ok(entries)
 }
 
+impl LogLevel {
+    /// Resolves one persisted one-byte level identifier.
+    pub(crate) fn from_id(id: u8) -> Result<Self, String> {
+        match id {
+            0 => Ok(Self::Trace),
+            1 => Ok(Self::Debug),
+            2 => Ok(Self::Info),
+            3 => Ok(Self::Warn),
+            4 => Ok(Self::Error),
+            _ => Err(format!("unsupported persisted log level id: {id}")),
+        }
+    }
+
+    /// Returns the bracketed text label shown by the viewer.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Trace => "[TRACE]",
+            Self::Debug => "[DEBUG]",
+            Self::Info => "[INFO]",
+            Self::Warn => "[WARN]",
+            Self::Error => "[ERROR]",
+        }
+    }
+
+    /// Returns the lowercase name used by viewer commands.
+    #[allow(dead_code)]
+    pub(crate) fn command_name(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+
+    /// Parses one plaintext token into the structured level.
+    pub(crate) fn parse_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_uppercase().as_str() {
+            "TRACE" => Some(Self::Trace),
+            "DEBUG" => Some(Self::Debug),
+            "INFO" => Some(Self::Info),
+            "WARN" => Some(Self::Warn),
+            "ERROR" => Some(Self::Error),
+            "FATAL" => Some(Self::Error),
+            _ => None,
+        }
+    }
+
+    /// Returns the persisted one-byte identifier.
+    pub(crate) fn to_persisted_id(self) -> u8 {
+        match self {
+            Self::Trace => 0,
+            Self::Debug => 1,
+            Self::Info => 2,
+            Self::Warn => 3,
+            Self::Error => 4,
+        }
+    }
+}
+
 impl CompressionAlgorithm {
     /// Resolves one persisted algorithm identifier.
-    fn from_id(id: u16) -> Result<Self, String> {
+    pub(crate) fn from_id(id: u16) -> Result<Self, String> {
         match id {
             0 => Ok(Self::None),
             1 => Ok(Self::Gzip),
@@ -241,6 +511,34 @@ impl CompressionAlgorithm {
             6 => Ok(Self::Zstd),
             7 => Ok(Self::Snappy),
             _ => Err(format!("unsupported compression algorithm id: {id}")),
+        }
+    }
+
+    /// Returns the persisted two-byte algorithm identifier.
+    pub(crate) fn id(self) -> u16 {
+        match self {
+            Self::None => 0,
+            Self::Gzip => 1,
+            Self::Zip => 2,
+            Self::Deflate => 3,
+            Self::Bzip2 => 4,
+            Self::Xz => 5,
+            Self::Zstd => 6,
+            Self::Snappy => 7,
+        }
+    }
+
+    /// Returns the stable display name used by the CLI.
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Gzip => "gzip",
+            Self::Zip => "zip",
+            Self::Deflate => "deflate",
+            Self::Bzip2 => "bzip2",
+            Self::Xz => "xz",
+            Self::Zstd => "zstd",
+            Self::Snappy => "snappy",
         }
     }
 
@@ -271,6 +569,81 @@ impl CompressionAlgorithm {
             Self::Snappy => read_all_from_decoder(FrameDecoder::new(Cursor::new(payload))),
         }
     }
+
+    /// Compresses one raw trunk payload according to the selected header algorithm.
+    pub(crate) fn compress(self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        match self {
+            Self::None => Ok(payload.to_vec()),
+            Self::Gzip => {
+                let mut encoder = GzEncoder::new(Vec::new(), FlateCompression::default());
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to compress payload: {error}"))?;
+                encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish gzip payload: {error}"))
+            }
+            Self::Zip => {
+                let mut encoder = ZipWriter::new(Cursor::new(Vec::new()));
+                encoder
+                    .start_file("payload", SimpleFileOptions::default())
+                    .map_err(|error| format!("failed to start zip payload: {error}"))?;
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to write zip payload: {error}"))?;
+                let cursor = encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish zip payload: {error}"))?;
+                Ok(cursor.into_inner())
+            }
+            Self::Deflate => {
+                let mut encoder = DeflateEncoder::new(Vec::new(), FlateCompression::default());
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to compress payload: {error}"))?;
+                encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish deflate payload: {error}"))
+            }
+            Self::Bzip2 => {
+                let mut encoder = BzEncoder::new(Vec::new(), BzCompression::default());
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to compress payload: {error}"))?;
+                encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish bzip2 payload: {error}"))
+            }
+            Self::Xz => {
+                let mut encoder = XzEncoder::new(Vec::new(), 6);
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to compress payload: {error}"))?;
+                encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish xz payload: {error}"))
+            }
+            Self::Zstd => {
+                let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 0)
+                    .map_err(|error| format!("failed to create zstd encoder: {error}"))?;
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to write zstd payload: {error}"))?;
+                encoder
+                    .finish()
+                    .map_err(|error| format!("failed to finish zstd payload: {error}"))
+            }
+            Self::Snappy => {
+                let mut encoder = FrameEncoder::new(Vec::new());
+                encoder
+                    .write_all(payload)
+                    .map_err(|error| format!("failed to compress payload: {error}"))?;
+                encoder
+                    .into_inner()
+                    .map_err(|error| format!("failed to finish snappy payload: {error}"))
+            }
+        }
+    }
 }
 
 /// Validates one configured trunk size in KB.
@@ -279,6 +652,11 @@ fn validate_trunk_size_kb(trunk_size_kb: u16) -> Result<u16, String> {
         return Err("trunk size must be greater than zero".to_string());
     }
     Ok(trunk_size_kb)
+}
+
+/// Returns the fixed file header size for the current on-disk layout.
+fn read_header_size() -> u64 {
+    26
 }
 
 /// Reads one big-endian 16-bit integer from a stream.
@@ -384,6 +762,11 @@ impl<'a> CursorReader<'a> {
         Ok((u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]))
     }
 
+    /// Reads one unsigned byte.
+    fn read_u8(&mut self) -> Result<u8, String> {
+        Ok(self.read_exact(1)?[0])
+    }
+
     /// Returns a borrowed slice of the requested length.
     fn read_exact(&mut self, length: usize) -> Result<&'a [u8], String> {
         if self.remaining() < length {
@@ -403,7 +786,9 @@ mod tests {
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{format_timestamp_millis, parse_bytes, read_visible_window};
+    use super::{
+        format_timestamp_millis, parse_bytes, read_last_window, read_visible_window, scan_file_index, LogLevel,
+    };
 
     fn push_u24(target: &mut Vec<u8>, value: u32) {
         target.push(((value >> 16) & 0xFF) as u8);
@@ -411,17 +796,18 @@ mod tests {
         target.push((value & 0xFF) as u8);
     }
 
-    fn build_raw_trunk(lines: &[(u32, &str)]) -> Vec<u8> {
+    fn build_raw_trunk(lines: &[(u32, u8, &str)]) -> Vec<u8> {
         let mut bytes = Vec::new();
-        for (offset, content) in lines {
+        for (offset, level, content) in lines {
             bytes.extend_from_slice(&offset.to_be_bytes());
+            bytes.push(*level);
             bytes.extend_from_slice(&(content.len() as u32).to_be_bytes());
             bytes.extend_from_slice(content.as_bytes());
         }
         bytes
     }
 
-    fn build_none_file(lines_by_trunk: Vec<Vec<(u32, &str)>>) -> Vec<u8> {
+    fn build_none_file(lines_by_trunk: Vec<Vec<(u32, u8, &str)>>) -> Vec<u8> {
         let base_timestamp = 1_777_672_860_253_u64;
         let total_records = lines_by_trunk
             .iter()
@@ -443,16 +829,26 @@ mod tests {
         bytes
     }
 
+    fn unique_temp_path(file_name: &str) -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("tinylog-format-test-{suffix}-{file_name}"))
+    }
+
     #[test]
     fn parse_bytes_reads_two_entries() {
-        let bytes = build_none_file(vec![vec![(0, "alpha"), (25, "beta")]]);
+        let bytes = build_none_file(vec![vec![(0, 2, "alpha"), (25, 4, "beta")]]);
 
         let entries = parse_bytes(&bytes).expect("parse bytes");
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].offset_millis, 0);
+        assert_eq!(entries[0].level, LogLevel::Info);
         assert_eq!(entries[0].content, "alpha");
         assert_eq!(entries[1].offset_millis, 25);
+        assert_eq!(entries[1].level, LogLevel::Error);
         assert_eq!(entries[1].content, "beta");
     }
 
@@ -481,7 +877,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let mut bytes = build_none_file(vec![vec![(0, "alpha")]]);
+        let mut bytes = build_none_file(vec![vec![(0, 2, "alpha")]]);
         bytes.extend_from_slice(&1_u16.to_be_bytes());
         bytes.extend_from_slice(&20_u32.to_be_bytes());
         bytes.extend_from_slice(b"be");
@@ -498,6 +894,26 @@ mod tests {
     }
 
     #[test]
+    fn read_last_window_uses_scanned_trunk_index() {
+        let path = unique_temp_path("tail.bin");
+        let bytes = build_none_file(vec![
+            vec![(0, 2, "alpha"), (25, 2, "beta")],
+            vec![(50, 3, "gamma"), (75, 4, "delta")],
+        ]);
+        fs::write(&path, bytes).expect("write prototype file");
+
+        let window = read_last_window(&path.to_string_lossy(), 3).expect("read tail window");
+
+        assert_eq!(window.total_records, 4);
+        assert_eq!(window.visible_entries.len(), 3);
+        assert_eq!(window.visible_entries[0].content, "beta");
+        assert_eq!(window.visible_entries[1].content, "gamma");
+        assert_eq!(window.visible_entries[2].content, "delta");
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
     fn read_visible_window_decompresses_gzip_payload() {
         let path = std::env::temp_dir().join(format!(
             "tinylog-visible-gzip-{}.tog",
@@ -506,7 +922,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let raw_trunk = build_raw_trunk(&[(0, "alpha")]);
+        let raw_trunk = build_raw_trunk(&[(0, 2, "alpha")]);
         let mut gzip_payload = Vec::new();
         {
             let mut encoder = GzEncoder::new(&mut gzip_payload, Compression::default());
@@ -549,11 +965,11 @@ mod tests {
         bytes.extend_from_slice(&1_777_672_860_253_u64.to_be_bytes());
         bytes.extend_from_slice(&2_u64.to_be_bytes());
         push_u24(&mut bytes, 2);
-        let first_trunk = build_raw_trunk(&[(0, "ba")]);
+        let first_trunk = build_raw_trunk(&[(0, 2, "ba")]);
         bytes.extend_from_slice(&1_u16.to_be_bytes());
         bytes.extend_from_slice(&(first_trunk.len() as u32).to_be_bytes());
         bytes.extend_from_slice(&first_trunk);
-        let second_trunk = build_raw_trunk(&[(25, "beta")]);
+        let second_trunk = build_raw_trunk(&[(25, 3, "beta")]);
         bytes.extend_from_slice(&1_u16.to_be_bytes());
         bytes.extend_from_slice(&(second_trunk.len() as u32).to_be_bytes());
         bytes.extend_from_slice(&second_trunk);
@@ -564,6 +980,25 @@ mod tests {
 
         assert_eq!(window.visible_entries.len(), 1);
         assert_eq!(window.visible_entries[0].content, "beta");
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
+    fn scan_file_index_tracks_trunk_offsets_and_ranges() {
+        let path = unique_temp_path("index.bin");
+        let bytes = build_none_file(vec![
+            vec![(0, 2, "alpha"), (25, 2, "beta")],
+            vec![(50, 3, "gamma")],
+        ]);
+        fs::write(&path, bytes).expect("write prototype file");
+
+        let index = scan_file_index(&path.to_string_lossy()).expect("scan trunk index");
+
+        assert_eq!(index.total_records(), 3);
+        assert_eq!(index.trunk_count(), 2);
+        assert_eq!(index.trunk_position_for_record(0), Some(1));
+        assert_eq!(index.trunk_position_for_record(2), Some(2));
 
         fs::remove_file(path).expect("cleanup file");
     }

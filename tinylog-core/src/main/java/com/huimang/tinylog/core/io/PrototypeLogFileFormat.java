@@ -48,14 +48,14 @@ final class PrototypeLogFileFormat {
     static final int HEADER_BYTES = 26;
 
     /**
-     * Stores the fixed-size metadata bytes for one persisted trunk.
+     * Stores the fixed-size metadata bytes at the start of one persisted trunk.
      */
     static final int TRUNK_HEADER_BYTES = 6;
 
     /**
      * Stores the fixed-size metadata bytes for one raw line inside a trunk.
      */
-    static final int LINE_HEADER_BYTES = 8;
+    static final int LINE_HEADER_BYTES = 9;
 
     /**
      * Stores the byte offset of the base timestamp within the file header.
@@ -154,6 +154,7 @@ final class PrototypeLogFileFormat {
         }
         byte[] contentBytes = record.getMessage().getBytes(CONTENT_CHARSET);
         output.writeInt((int) offsetMillis);
+        output.writeByte(toPersistedLevelId(record.getLevel()));
         output.writeInt(contentBytes.length);
         output.write(contentBytes);
     }
@@ -161,14 +162,54 @@ final class PrototypeLogFileFormat {
     /**
      * Rebuilds a domain record from one parsed raw line.
      */
-    static LogRecord toRecord(long baseTimestampUtcMillis, long offsetMillis, String content) {
+    static LogRecord toRecord(long baseTimestampUtcMillis, long offsetMillis, int persistedLevelId, String content) {
         return new LogRecord(
                 baseTimestampUtcMillis + offsetMillis,
-                LogLevel.INFO,
+                fromPersistedLevelId(persistedLevelId),
                 "prototype",
                 "prototype",
                 content,
                 Collections.singletonMap("format", "trunk"));
+    }
+
+    /**
+     * Maps one domain level to the persisted one-byte identifier.
+     */
+    static int toPersistedLevelId(LogLevel level) {
+        switch (level) {
+            case TRACE:
+                return 0;
+            case DEBUG:
+                return 1;
+            case INFO:
+                return 2;
+            case WARN:
+                return 3;
+            case ERROR:
+                return 4;
+            default:
+                throw new IllegalArgumentException("unsupported log level: " + level);
+        }
+    }
+
+    /**
+     * Maps one persisted one-byte identifier back to the domain level.
+     */
+    static LogLevel fromPersistedLevelId(int persistedLevelId) {
+        switch (persistedLevelId) {
+            case 0:
+                return LogLevel.TRACE;
+            case 1:
+                return LogLevel.DEBUG;
+            case 2:
+                return LogLevel.INFO;
+            case 3:
+                return LogLevel.WARN;
+            case 4:
+                return LogLevel.ERROR;
+            default:
+                throw new IllegalArgumentException("unsupported persisted log level id: " + persistedLevelId);
+        }
     }
 
     /**

@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -64,8 +65,9 @@ public final class PlainTextLogToTinylogConverter {
     /**
      * Converts one plaintext log file to one trunk-based tinylog file.
      *
-     * <p>The accepted line format is {@code <yyyy-MM-dd HH:mm:ss,SSS><space><message>}, and the timestamp text is
-     * interpreted as a UTC calendar value to match the file-level UTC base timestamp.
+     * <p>The accepted line format is {@code <yyyy-MM-dd HH:mm:ss,SSS><space>[LEVEL]<space><message>}. The converter
+     * removes that first level token from the stored message and persists the level in the raw tinylog line metadata.
+     * The timestamp text is interpreted as a UTC calendar value to match the file-level UTC base timestamp.
      */
     public void convert(Path plainTextLogPath, Path tinylogPath) throws IOException {
         Objects.requireNonNull(plainTextLogPath, "plainTextLogPath");
@@ -104,13 +106,13 @@ public final class PlainTextLogToTinylogConverter {
     private LogRecord parseLine(Path plainTextLogPath, int lineNumber, String line) {
         validateLineShape(plainTextLogPath, lineNumber, line);
         long timestampMillis = parseTimestampMillis(plainTextLogPath, lineNumber, line);
-        String message = line.substring(TIMESTAMP_TEXT_LENGTH + 1);
+        ParsedPlainTextLine parsedLine = parseLevelAndMessage(line);
         return new LogRecord(
                 timestampMillis,
-                LogLevel.INFO,
+                parsedLine.level,
                 plainTextLogPath.getFileName().toString(),
                 CONVERTER_SOURCE,
-                message,
+                parsedLine.message,
                 null);
     }
 
@@ -131,6 +133,49 @@ public final class PlainTextLogToTinylogConverter {
             throw new IllegalArgumentException(
                     "invalid timestamp at " + plainTextLogPath + ":" + lineNumber,
                     exception);
+        }
+    }
+
+    private ParsedPlainTextLine parseLevelAndMessage(String line) {
+        String content = line.substring(TIMESTAMP_TEXT_LENGTH + 1);
+        if (!content.startsWith("[")) {
+            return new ParsedPlainTextLine(LogLevel.INFO, content);
+        }
+        int closingBracketIndex = content.indexOf(']');
+        if (closingBracketIndex < 0) {
+            return new ParsedPlainTextLine(LogLevel.INFO, content);
+        }
+        LogLevel level = tryParseLevelToken(content.substring(1, closingBracketIndex));
+        if (level == null) {
+            return new ParsedPlainTextLine(LogLevel.INFO, content);
+        }
+        String message = content.substring(closingBracketIndex + 1);
+        if (!message.isEmpty() && message.charAt(0) == TIMESTAMP_SEPARATOR) {
+            message = message.substring(1);
+        }
+        return new ParsedPlainTextLine(level, message);
+    }
+
+    private LogLevel tryParseLevelToken(String levelToken) {
+        String normalizedLevel = levelToken.trim().toUpperCase(Locale.ROOT);
+        if ("FATAL".equals(normalizedLevel)) {
+            return LogLevel.ERROR;
+        }
+        for (LogLevel value : LogLevel.values()) {
+            if (value.name().equals(normalizedLevel)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static final class ParsedPlainTextLine {
+        private final LogLevel level;
+        private final String message;
+
+        private ParsedPlainTextLine(LogLevel level, String message) {
+            this.level = level;
+            this.message = message;
         }
     }
 }

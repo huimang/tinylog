@@ -37,7 +37,6 @@ The main `.tog` file begins with a fixed-size header in **big-endian** order.
 | `baseTimestampUtcMillis` | 8 bytes |  | File-level base timestamp in UTC milliseconds |
 | `totalLogLineCount` | 8 bytes | 0 | Total number of log lines already persisted into trunks |
 | `trunkCount` | 3 bytes | 0 | Total number of completed trunks already appended |
-
 ### Header Layout
 
 ```text
@@ -83,7 +82,6 @@ Each completed trunk is appended to the main `.tog` file using this structure:
 | `trunkLogLineCount` | 2 bytes | Number of lines in this trunk |
 | `compressedContentLength` | 4 bytes | Number of bytes in the compressed trunk payload |
 | `compressedContent` | N bytes | Compressed raw trunk payload |
-
 ### Trunk Layout
 
 ```text
@@ -105,9 +103,9 @@ Before compression, a trunk contains raw log lines in sequence:
 ### Raw Line Layout
 
 ```text
-[offsetMillis:4][contentLength:4][content:N]
-[offsetMillis:4][contentLength:4][content:N]
-[offsetMillis:4][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
+[offsetMillis:4][level:1][contentLength:4][content:N]
 ...
 ```
 
@@ -181,7 +179,7 @@ log-buffer-2.tmp
             v
 +----------------------------------------------+
 | Append raw line                              |
-| offsetMillis + contentLength + content       |
+| offsetMillis + level + contentLength + content |
 +----------------------------------------------+
             |
             v
@@ -200,19 +198,14 @@ log-buffer-2.tmp
 +----------------------------------+ |
             |                       |
             v                       |
-+---------------------------------------------------------------+
-| Append trunkLogLineCount + compressedContentLength + payload  |
-+---------------------------------------------------------------+
++------------------------------------------------------+
+| Append trunkLogLineCount + compressedContentLength + payload |
++------------------------------------------------------+
             |
             v
-+-------------------------------+
-| Update totalLogLineCount      |
-+-------------------------------+
-            |
-            v
-+-------------------------------+
-| Update trunkCount             |
-+-------------------------------+
++-----------------------------------+
+| Update totalLogLineCount / trunkCount |
++-----------------------------------+
             |
             v
 +-------------------------------+
@@ -234,7 +227,7 @@ log-buffer-2.tmp
 3. For each incoming log line:
    1. parse the plaintext timestamp
    2. compute `offsetMillis = lineTimestampUtcMillis - baseTimestampUtcMillis`
-   3. append `[offsetMillis:4][contentLength:4][content]` to the current buffer file
+   3. append `[offsetMillis:4][level:1][contentLength:4][content]` to the current buffer file
 4. When the buffer file reaches the configured `trunkSizeKb` threshold:
    1. read the entire raw buffer
    2. compress the whole buffer using the selected header algorithm
@@ -301,12 +294,13 @@ The reader/viewer works against the header plus the appended trunk sequence.
 
 1. Read the fixed header
 2. Determine the visible range or scan range
-3. Walk trunk metadata sequentially until the target trunk is reached
-4. Read only the target trunk payload
-5. Decompress that trunk
-6. Parse raw lines inside the trunk
-7. Reconstruct each timestamp from the file-level base timestamp
-8. Return only the requested records to the caller or viewer
+3. Scan all trunk offsets plus line counts once and cache that index in memory
+4. Use the cached index to find the target trunk
+5. Read only the target trunk payload
+6. Decompress that trunk
+7. Parse raw lines inside the trunk
+8. Reconstruct each timestamp from the file-level base timestamp
+9. Return only the requested records to the caller or viewer
 
 ## Viewer Expectations
 
@@ -339,7 +333,7 @@ Please confirm these points before implementation:
 
 1. Header order: `version -> compression -> trunkSizeKb -> baseTimestampUtcMillis -> totalLogLineCount -> trunkCount`
 2. One file-level UTC base timestamp is shared by all trunks
-3. Each line inside a trunk is `[offsetMillis:4][contentLength:4][content]`
+3. Each line inside a trunk is `[offsetMillis:4][level:1][contentLength:4][content]`
 4. Each trunk is `[trunkLogLineCount:2][compressedContentLength:4][compressedContent]`
 5. Default compression returns to `gzip`
 6. Buffer files use `log-buffer-{trunkIndex}.tmp`

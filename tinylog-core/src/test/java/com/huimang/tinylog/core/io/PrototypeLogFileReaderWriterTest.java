@@ -38,6 +38,8 @@ public class PrototypeLogFileReaderWriterTest {
         assertEquals(2, records.size());
         assertEquals(1_777_672_860_253L, records.get(0).getTimestampMillis());
         assertEquals(1_777_672_860_378L, records.get(1).getTimestampMillis());
+        assertEquals(LogLevel.INFO, records.get(0).getLevel());
+        assertEquals(LogLevel.ERROR, records.get(1).getLevel());
         assertEquals("alpha", records.get(0).getMessage());
         assertEquals("beta", records.get(1).getMessage());
         assertEquals("trunk", records.get(0).getAttributes().get("format"));
@@ -60,6 +62,7 @@ public class PrototypeLogFileReaderWriterTest {
         assertEquals(1_777_672_860_253L, readBaseTimestamp(bytes));
         assertEquals(3L, readTotalLogLineCount(bytes));
         assertEquals(3, readTrunkCount(bytes));
+        assertEquals(3, readPersistedTrunkStarts(bytes).size());
     }
 
     @Test
@@ -166,6 +169,20 @@ public class PrototypeLogFileReaderWriterTest {
 
     private static int readTrunkCount(byte[] header) {
         return ((header[23] & 0xFF) << 16) | ((header[24] & 0xFF) << 8) | (header[25] & 0xFF);
+    }
+
+    private static List<Integer> readPersistedTrunkStarts(byte[] bytes) {
+        List<Integer> starts = new ArrayList<>();
+        int offset = PrototypeLogFileFormat.HEADER_BYTES;
+        while (offset < bytes.length) {
+            starts.add(Integer.valueOf(offset));
+            int compressedLength = ((bytes[offset + 2] & 0xFF) << 24)
+                    | ((bytes[offset + 3] & 0xFF) << 16)
+                    | ((bytes[offset + 4] & 0xFF) << 8)
+                    | (bytes[offset + 5] & 0xFF);
+            offset += PrototypeLogFileFormat.TRUNK_HEADER_BYTES + compressedLength;
+        }
+        return Collections.unmodifiableList(starts);
     }
 
     private static String repeat(char value, int count) {

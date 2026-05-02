@@ -1,8 +1,12 @@
-# tinylog
+# TinyLog
+
+<p align="center">
+  <img src="assets/tinylog-logo.svg" alt="TinyLog logo" width="320" />
+</p>
 
 [中文版说明](README.zh-CN.md)
 
-`tinylog` is a project scaffold for **high-density log storage** and **low-memory log access**.
+`TinyLog` is a project scaffold for **high-density log storage** and **low-memory log access**.
 It targets the two main pain points of traditional plaintext logging: excessive storage cost and expensive traversal of very large files.
 
 ## Vision
@@ -15,7 +19,7 @@ Traditional logs are usually stored as plaintext. That creates two systemic issu
 The project is initialized around two product surfaces:
 
 1. **Java SDK** for application integration, with business-facing logging APIs similar in role to `slf4j`.
-2. **Rust viewer** for opening and navigating proprietary tinylog files with a `vim`-like workflow for browsing, searching, and positioning.
+2. **Rust viewer** for converting plaintext logs into proprietary TinyLog files, then opening and navigating them with a `vim`-like workflow for browsing, searching, and positioning.
 
 ## Modules
 
@@ -23,70 +27,18 @@ The project is initialized around two product surfaces:
 | --- | --- |
 | `tinylog-core` | Core log domain model, codec abstractions, and reader/writer contracts |
 | `tinylog-sdk` | Business-facing Java logging API, logger factories, and SLF4J 2.0.17 bridge support |
-| `tinylog-viewer` | Rust CLI scaffold for browsing proprietary tinylog files |
+| `tinylog-viewer` | Rust CLI scaffold for converting plaintext logs to `.tog` and browsing proprietary TinyLog files |
 
-## Engineering Guidelines
+## Collaboration Guidelines
 
-### 1. Interface design is business-first
-
-Public interfaces should be named and shaped around **business capabilities**, not around storage engines, codecs, buffers, or transport details.
-
-- Prefer terms such as `log`, `browse`, `search`, `jump`, `record`, and `query`
-- Avoid leaking implementation detail into business-facing APIs
-- Keep interfaces abstract enough to support multiple backends and file formats
-
-### 2. Modules must be independent and self-contained
-
-Each module should have a clear boundary, a coherent responsibility, and minimal cross-module assumptions.
-
-- `tinylog-core` defines the shared contracts
-- `tinylog-sdk` focuses on application integration
-- `tinylog-viewer` evolves independently as a dedicated client
-- Cross-module dependencies should remain explicit and minimal
-
-### 3. Code should be commented by default
-
-Code should include comments or doc comments unless the intent is completely obvious.
-
-- Explain business meaning and boundary decisions
-- Keep comments concise and durable
-- Prefer API-level comments for public types and methods
-
-### 4. Documentation is language-separated
-
-- The root README should stay English-only
-- Chinese project-facing documentation should live in standalone Chinese files
-- API names and code symbols should remain stable and language-neutral
-
-### 5. Commit metadata conventions
-
-- **Author** should be the repository owner
-- **Committer** can be a dedicated AI identity configured locally
-- **Commit messages** must describe the change itself and **must not mention any AI, model, tool, or agent identity**
-- Every relatively complete, stable feature should be committed immediately
-- If several commits were created while iterating on the same feature or fix, they should be squashed into one clean feature-level commit before continuing
-
-Example commit message style:
-
-```text
-viewer: initialize rust cli scaffold
-core: add log query abstraction
-sdk: introduce business-facing logger factory
-```
-
-Recommended workflow:
-
-1. Finish one coherent feature end-to-end
-2. Confirm it is in a stable state
-3. Create exactly one commit for that feature
-4. If multiple intermediate commits exist, reset back to the feature start and recombine them into one clean commit
+Repository collaboration rules, engineering conventions, and commit conventions live in [`AGENTS.md`](AGENTS.md).
 
 ## Current Technical Direction
 
 - **Java namespace**: `com.huimang.tinylog`
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
 - **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration
-- **Rust viewer**: standalone Cargo project under `tinylog-viewer`
+- **Rust viewer**: standalone Cargo project under `tinylog-viewer`, responsible for both `.tog` conversion and interactive browsing
 - **Storage redesign draft (EN)**: `docs/log-storage-structure.md`
 - **Storage redesign draft (ZH-CN)**: `docs/zh-CN/log-storage-structure.md`
 
@@ -119,7 +71,8 @@ Current prototype notes:
 
 - The Java writer buffers raw lines into `log-buffer-{trunkIndex}.tmp` files
 - Once the buffer reaches the configured trunk size, the whole trunk is compressed and appended to the main `.tog`
-- Each raw line inside a decompressed trunk uses `[offsetMillis:4][contentLength:4][content:N]`
+- Each raw line inside a decompressed trunk uses `[offsetMillis:4][level:1][contentLength:4][content:N]`
+- The viewer scans trunk offsets and line counts once at open time and keeps that index in memory
 - The Rust viewer reads the same binary format directly and only decompresses the trunk(s) needed for the current visible window
 - The complete storage design is documented in `docs/log-storage-structure.md` and `docs/zh-CN/log-storage-structure.md`
 
@@ -141,38 +94,57 @@ Compression algorithm IDs:
 The current prototype accepts plaintext log lines in this format:
 
 ```text
-<yyyy-MM-dd HH:mm:ss,SSS> <message>
+<yyyy-MM-dd HH:mm:ss,SSS> [LEVEL] <message>
 ```
 
-The converter interprets that timestamp text as a **UTC calendar value**, and the viewer renders the reconstructed timestamp in UTC as well. That keeps the displayed text stable because every raw line only stores its millisecond offset from the file-level UTC base timestamp.
+The converter interprets that timestamp text as a **UTC calendar value**, extracts the first `[LEVEL]` token into a dedicated one-byte field, removes that token from the stored message body, and the viewer reconstructs the line using the persisted level plus the UTC timestamp offset.
 
 ### 1. Create a sample `normal.log`
 
 ```bash
 cat > normal.log <<'EOF'
-2026-05-01 22:01:00,253 service started
-2026-05-01 22:01:00,278 user signed in
-2026-05-01 22:01:00,353 order created
+2026-05-01 22:01:00,253 [INFO] service started
+2026-05-01 22:01:00,278 [WARN] user signed in
+2026-05-01 22:01:00,353 [ERROR] order created
 EOF
 ```
 
 ### 2. Convert `normal.log` to `normal.tog`
 
 ```bash
-mvn -q -pl tinylog-core -am package
-java -jar tinylog-core/target/tinylog-core-0.1.0-SNAPSHOT-all.jar normal.log normal.tog
+cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- convert normal.log normal.tog
+```
+
+Helper script:
+
+```bash
+scripts/tinylog-convert.sh normal.log
 ```
 
 Expected output:
 
 ```text
+counting total lines in normal.log
+progress: 0/3 (0.00%)
+progress: 3/3 (100.00%)
 converted normal.log to normal.tog using gzip
+source size: 120 (120 B)
+output size: 111 (111 B)
+compression ratio: 92.50%
+elapsed: 4ms
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer
 
 ```bash
 cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- normal.tog
+```
+
+Helper scripts:
+
+```bash
+scripts/tinylog-view.sh normal.tog
+scripts/tinylog-open.sh normal.log
 ```
 
 Key bindings:
@@ -185,16 +157,21 @@ d / PageDown    page down
 u / PageUp      page up
 g               jump to top
 G               jump to bottom
+:N              jump to line N
+/keyword        search keyword by trunk and jump to the nearest result
+n               move to next cached search result
+p               move to previous cached search result
+Esc             clear active search and remove highlight
 q               quit
 ```
 
 Expected screen content:
 
 ```text
-tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
-     1▏2026-05-01 22:01:00,253 service started
-     2  2026-05-01 22:01:00,278 user signed in
-     3  2026-05-01 22:01:00,353 order created
+TinyLog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
+     1 ▪2026-05-01 22:01:00,253 [INFO] service started
+     2  2026-05-01 22:01:00,278 [WARN] user signed in
+     3  2026-05-01 22:01:00,353 [ERROR] order created
 ```
 
 The viewer stays open like a lightweight vim-style browser. The display area is rendered as two independent panes: a blue left logical line-number pane and a right content pane, with a pale-orange rectangular marker offset slightly to the right of the line numbers for the focused row. The marker is shown only on the first physical row of the focused logical log entry. One logical log line can span multiple rendered rows because of width limits or embedded newlines, but it still keeps a single sequence number in the left pane. The focused line moves freely inside the viewport and the screen scrolls only when another move would push that focused row past the top or bottom edge.
@@ -202,12 +179,16 @@ The viewer stays open like a lightweight vim-style browser. The display area is 
 ### 4. Re-run the automated converter test only
 
 ```bash
-mvn -q -pl tinylog-core -Dtest=PlainTextLogToTinylogConverterTest test
+cd tinylog-viewer && cargo test converter::tests::convert_plaintext_log_writes_parseable_tog
 ```
 
 ## Near-Term Roadmap
 
-1. Define the tinylog file header, block layout, and index structure
+1. Define the TinyLog file header, block layout, and index structure
 2. Implement streaming writer/reader paths and compression codecs
 3. Add a default Java SDK implementation behind the abstract logging API
 4. Add paging, search, and jump workflows to the Rust viewer
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

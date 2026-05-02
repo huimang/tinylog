@@ -4,13 +4,13 @@ import java.util.Objects;
 import org.slf4j.Logger;
 
 /**
- * Adapts one SLF4J logger to the tinylog business-facing logger contract.
+ * Adapts one SLF4J logger to the TinyLog business-facing logger contract.
  */
 public final class Slf4jTinyLogger implements TinyLogger {
     private final Logger delegate;
 
     /**
-     * Creates a tinylog logger backed by one SLF4J logger instance.
+     * Creates a TinyLog logger backed by one SLF4J logger instance.
      */
     public Slf4jTinyLogger(Logger delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");

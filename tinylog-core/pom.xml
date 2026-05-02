@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>tinylog-core</artifactId>
-    <name>tinylog-core</name>
+    <name>TinyLog Core</name>
 
     <dependencies>
         <dependency>
