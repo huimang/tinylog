@@ -113,8 +113,8 @@ building trunk index and preparing worker assignments for huge.log
 indexing: 0/1015076 (0.00%)
 indexing: 1015076/1015076 (100.00%)
 compressing 157 trunks with 16 workers
-workers 1: 0% 2: 0% 3: 0% 4: 0%
-workers 1: 10% 2: 20% 3: 24% 4: 10%
+writing: 1: 0% 2: 0% 3: 0% 4: 0%
+writing: 1: 10% 2: 20% 3: 24% 4: 10%
 ```
 
 ### 3. Read `normal.tog` with the Rust viewer

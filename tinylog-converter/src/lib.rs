@@ -1141,7 +1141,7 @@ impl<W: Write> ProgressReporter<W> {
     }
 
     fn render_worker_snapshot(&mut self, workers: &[WorkerProgress]) -> Result<(), String> {
-        let mut line = String::from("workers");
+        let mut line = String::from("writing:");
         for worker in workers {
             let percent = if worker.total_trunks == 0 {
                 100
