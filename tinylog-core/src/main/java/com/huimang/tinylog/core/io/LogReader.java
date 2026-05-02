@@ -7,7 +7,7 @@ import java.io.IOException;
 import java.util.Iterator;
 
 /**
- * Streams log records from a TinyLog source without forcing full-file loading.
+ * Streams log records from a TinyLog source without exposing language-specific runtime concepts.
  */
 public interface LogReader extends Closeable {
     /**

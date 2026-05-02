@@ -26,6 +26,7 @@
         <commons.compress.version>1.27.1</commons.compress.version>
         <xz.version>1.10</xz.version>
         <zstd.version>1.5.7-4</zstd.version>
+        <protobuf.version>3.25.5</protobuf.version>
     </properties>
 
     <dependencyManagement>

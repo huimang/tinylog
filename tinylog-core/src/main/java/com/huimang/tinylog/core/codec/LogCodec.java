@@ -4,7 +4,7 @@ import com.huimang.tinylog.core.model.LogRecord;
 import java.io.IOException;
 
 /**
- * Defines how a log record is converted to and from the TinyLog binary format.
+ * Defines how a language-neutral log record is converted to and from the TinyLog binary format.
  */
 public interface LogCodec {
     /**

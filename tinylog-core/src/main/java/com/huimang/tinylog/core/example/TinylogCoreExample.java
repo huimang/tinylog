@@ -10,7 +10,7 @@ import java.nio.file.Paths;
 import java.util.Iterator;
 
 /**
- * Demonstrates the basic TinyLog Core write and read flow.
+ * Demonstrates the basic TinyLog Core write and read flow through language-neutral core contracts.
  */
 public final class TinylogCoreExample {
     private TinylogCoreExample() {
@@ -30,15 +30,15 @@ public final class TinylogCoreExample {
             writer.append(new LogRecord(
                     1_777_672_860_253L,
                     LogLevel.INFO,
-                    "example",
-                    "main",
+                    "order-service",
+                    "startup",
                     "service started",
                     null));
             writer.append(new LogRecord(
                     1_777_672_860_278L,
                     LogLevel.WARN,
-                    "example",
-                    "main",
+                    "order-service",
+                    "queue-monitor",
                     "queue depth is rising",
                     null));
         }

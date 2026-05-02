@@ -11,8 +11,8 @@ import java.util.Objects;
 public final class LogRecord {
     private final long timestampMillis;
     private final LogLevel level;
-    private final String loggerName;
-    private final String threadName;
+    private final String source;
+    private final String context;
     private final String message;
     private final Map<String, String> attributes;
 
@@ -21,14 +21,14 @@ public final class LogRecord {
      */
     public LogRecord(long timestampMillis,
             LogLevel level,
-            String loggerName,
-            String threadName,
+            String source,
+            String context,
             String message,
             Map<String, String> attributes) {
         this.timestampMillis = timestampMillis;
         this.level = Objects.requireNonNull(level, "level");
-        this.loggerName = Objects.requireNonNull(loggerName, "loggerName");
-        this.threadName = Objects.requireNonNull(threadName, "threadName");
+        this.source = Objects.requireNonNull(source, "source");
+        this.context = Objects.requireNonNull(context, "context");
         this.message = Objects.requireNonNull(message, "message");
         this.attributes = Collections.unmodifiableMap(new LinkedHashMap<String, String>(
                 attributes == null ? Collections.<String, String>emptyMap() : attributes));
@@ -49,17 +49,37 @@ public final class LogRecord {
     }
 
     /**
-     * Returns the logical logger name used by the caller.
+     * Returns the business source that produced the event.
      */
-    public String getLoggerName() {
-        return loggerName;
+    public String getSource() {
+        return source;
     }
 
     /**
-     * Returns the thread that produced the event.
+     * Returns the business context associated with the event.
      */
+    public String getContext() {
+        return context;
+    }
+
+    /**
+     * Returns the legacy logger-style source name.
+     *
+     * @deprecated Prefer {@link #getSource()} so the core model stays language-neutral.
+     */
+    @Deprecated
+    public String getLoggerName() {
+        return getSource();
+    }
+
+    /**
+     * Returns the legacy thread-style context name.
+     *
+     * @deprecated Prefer {@link #getContext()} so the core model stays language-neutral.
+     */
+    @Deprecated
     public String getThreadName() {
-        return threadName;
+        return getContext();
     }
 
     /**

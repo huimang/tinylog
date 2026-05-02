@@ -11,6 +11,10 @@ public class LogRecordTest {
         LogRecord record = new LogRecord(1L, LogLevel.INFO, "app", "main", "hello", null);
 
         assertEquals(LogLevel.INFO, record.getLevel());
+        assertEquals("app", record.getSource());
+        assertEquals("main", record.getContext());
+        assertEquals("app", record.getLoggerName());
+        assertEquals("main", record.getThreadName());
         assertTrue(record.getAttributes().isEmpty());
     }
 }

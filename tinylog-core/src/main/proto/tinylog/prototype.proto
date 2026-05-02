@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package tinylog.prototype.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "TinylogPrototypeProto";
+option java_package = "com.huimang.tinylog.proto";
+
+import "google/protobuf/wrappers.proto";
+
+// Defines the shared severity contract used across TinyLog language implementations.
+enum PrototypeLogLevel {
+  PROTOTYPE_LOG_LEVEL_UNSPECIFIED = 0;
+  PROTOTYPE_LOG_LEVEL_TRACE = 1;
+  PROTOTYPE_LOG_LEVEL_DEBUG = 2;
+  PROTOTYPE_LOG_LEVEL_INFO = 3;
+  PROTOTYPE_LOG_LEVEL_WARN = 4;
+  PROTOTYPE_LOG_LEVEL_ERROR = 5;
+}
+
+// Defines one language-neutral log record contract.
+message PrototypeLogRecord {
+  uint64 timestamp_millis = 1;
+  PrototypeLogLevel level = 2;
+  string source = 3;
+  string context = 4;
+  string message = 5;
+  map<string, string> attributes = 6;
+}
+
+// Defines one language-neutral log query contract.
+message PrototypeLogQuery {
+  google.protobuf.UInt64Value start_timestamp_millis = 1;
+  google.protobuf.UInt64Value end_timestamp_millis = 2;
+  google.protobuf.Int32Value minimum_level = 3;
+  google.protobuf.StringValue keyword = 4;
+}

@@ -5,7 +5,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 /**
- * Appends logical records to a tinylog destination.
+ * Appends logical records to a TinyLog destination through language-neutral core contracts.
  */
 public interface LogWriter extends Closeable {
     /**

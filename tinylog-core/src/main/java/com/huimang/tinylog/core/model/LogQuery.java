@@ -1,7 +1,7 @@
 package com.huimang.tinylog.core.model;
 
 /**
- * Describes a business-oriented filter for browsing or searching log data.
+ * Describes a language-neutral, business-oriented filter for browsing or searching log data.
  */
 public final class LogQuery {
     private final Long startTimestampMillis;
