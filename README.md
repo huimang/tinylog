@@ -193,12 +193,12 @@ Expected screen content:
 ```text
 tinylog viewer | file=normal.tog | records=3 | line=1 | j/k move  enter +1/4  d/u page  g/G ends  q quit
 
-1 2026-05-01 22:01:00,253 service started
-2 2026-05-01 22:01:00,278 user signed in
-3 2026-05-01 22:01:00,353 order created
+1 | 2026-05-01 22:01:00,253 service started
+2 | 2026-05-01 22:01:00,278 user signed in
+3 | 2026-05-01 22:01:00,353 order created
 ```
 
-The viewer stays open like a lightweight vim-style browser. It only reads and decodes the currently visible page of records. Records outside the visible window are left untouched until they are needed.
+The viewer stays open like a lightweight vim-style browser. The display area is split into a left logical line-number column and a right content area. One logical log line can span multiple rendered rows because of width limits or embedded newlines, but it still keeps a single sequence number.
 
 ### 4. Re-run the automated converter test only
 

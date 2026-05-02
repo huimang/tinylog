@@ -50,9 +50,11 @@ impl InteractiveViewerSession {
     }
 
     /// Renders the current visible window into terminal lines.
-    pub fn render_lines(&self, height: usize) -> Result<Vec<String>, String> {
-        let visible_count = self.visible_count(height);
+    pub fn render_lines(&self, height: usize, width: usize) -> Result<Vec<String>, String> {
+        let visible_count = self.visible_record_count(height);
         let window = format::read_visible_window(&self.log_file, self.top_index, visible_count)?;
+        let line_number_width = self.total_records.to_string().len().max(1);
+        let content_width = width.saturating_sub(line_number_width + 3).max(1);
         let mut lines = Vec::new();
         lines.push(format!(
             "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
@@ -62,14 +64,31 @@ impl InteractiveViewerSession {
         ));
         lines.push(String::new());
         for (index, entry) in window.visible_entries.into_iter().enumerate() {
-            lines.push(format!(
-                "{} {} {}",
-                self.top_index.saturating_add(index).saturating_add(1),
-                format::format_timestamp_millis(entry.timestamp_millis)?,
-                entry.content
-            ));
+            let logical_line_number = self.top_index.saturating_add(index).saturating_add(1);
+            let rendered_content = wrap_content(
+                &format!(
+                    "{} {}",
+                    format::format_timestamp_millis(entry.timestamp_millis)?,
+                    entry.content
+                ),
+                content_width,
+            );
+            for (rendered_index, rendered_line) in rendered_content.into_iter().enumerate() {
+                lines.push(format_rendered_row(
+                    if rendered_index == 0 {
+                        Some(logical_line_number)
+                    } else {
+                        None
+                    },
+                    line_number_width,
+                    &rendered_line,
+                ));
+            }
+            if lines.len() >= height {
+                break;
+            }
         }
-        let remaining = self.visible_count(height).saturating_sub(lines.len().saturating_sub(2));
+        let remaining = height.saturating_sub(lines.len());
         for _ in 0..remaining {
             lines.push(String::new());
         }
@@ -90,20 +109,20 @@ impl InteractiveViewerSession {
 
     /// Moves the window down by one page.
     pub fn page_down(&mut self, height: usize) {
-        let page = self.visible_count(height).max(1);
+        let page = self.visible_record_count(height).max(1);
         let max_top = self.total_records.saturating_sub(1);
         self.top_index = usize::min(self.top_index.saturating_add(page), max_top);
     }
 
     /// Moves the window up by one page.
     pub fn page_up(&mut self, height: usize) {
-        let page = self.visible_count(height).max(1);
+        let page = self.visible_record_count(height).max(1);
         self.top_index = self.top_index.saturating_sub(page);
     }
 
     /// Moves the window down by one quarter of the current page.
     pub fn quarter_page_down(&mut self, height: usize) {
-        let step = (self.visible_count(height).max(1) / 4).max(1);
+        let step = (self.visible_record_count(height).max(1) / 4).max(1);
         let max_top = self.total_records.saturating_sub(1);
         self.top_index = usize::min(self.top_index.saturating_add(step), max_top);
     }
@@ -115,15 +134,45 @@ impl InteractiveViewerSession {
 
     /// Moves the window to the last renderable page.
     pub fn move_to_bottom(&mut self, height: usize) {
-        let page = self.visible_count(height).max(1);
+        let page = self.visible_record_count(height).max(1);
         self.top_index = self.total_records.saturating_sub(page);
     }
 
-    /// Returns the visible page size derived from terminal height and configuration.
-    fn visible_count(&self, height: usize) -> usize {
+    /// Returns the visible record count derived from terminal height and configuration.
+    fn visible_record_count(&self, height: usize) -> usize {
         let terminal_page = height.saturating_sub(2).max(1);
         usize::min(self.preferred_page_size, terminal_page).max(1)
     }
+}
+
+/// Formats one rendered row so the line-number region and content region stay visually separate.
+fn format_rendered_row(line_number: Option<usize>, line_number_width: usize, content: &str) -> String {
+    match line_number {
+        Some(line_number) => format!("{:<width$} | {}", line_number, content, width = line_number_width),
+        None => format!("{:width$} | {}", "", content, width = line_number_width),
+    }
+}
+
+/// Wraps one logical log line into the right-hand content area while preserving explicit newlines.
+fn wrap_content(content: &str, content_width: usize) -> Vec<String> {
+    let mut rendered_lines = Vec::new();
+    for segment in content.split('\n') {
+        if segment.is_empty() {
+            rendered_lines.push(String::new());
+            continue;
+        }
+        let characters: Vec<char> = segment.chars().collect();
+        let mut start = 0usize;
+        while start < characters.len() {
+            let end = usize::min(start.saturating_add(content_width), characters.len());
+            rendered_lines.push(characters[start..end].iter().collect());
+            start = end;
+        }
+    }
+    if rendered_lines.is_empty() {
+        rendered_lines.push(String::new());
+    }
+    rendered_lines
 }
 
 impl ViewerSession for InteractiveViewerSession {
@@ -191,15 +240,15 @@ mod tests {
 
         let mut session =
             InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2).expect("open session");
-        let first_page = session.render_lines(4).expect("render first page");
+        let first_page = session.render_lines(4, 80).expect("render first page");
         session.move_down();
-        let second_page = session.render_lines(4).expect("render second page");
+        let second_page = session.render_lines(4, 80).expect("render second page");
 
-        assert!(first_page.iter().any(|line| line.contains("1 2026-05-01 22:01:00,253 alpha")));
-        assert!(first_page.iter().any(|line| line.contains("2 2026-05-01 22:01:00,278 beta")));
+        assert!(first_page.iter().any(|line| line.contains("1 | 2026-05-01 22:01:00,253 alpha")));
+        assert!(first_page.iter().any(|line| line.contains("2 | 2026-05-01 22:01:00,278 beta")));
         assert!(!first_page.iter().any(|line| line.contains("gamma")));
-        assert!(second_page.iter().any(|line| line.contains("2 2026-05-01 22:01:00,278 beta")));
-        assert!(second_page.iter().any(|line| line.contains("3 2026-05-01 22:01:00,303 gamma")));
+        assert!(second_page.iter().any(|line| line.contains("2 | 2026-05-01 22:01:00,278 beta")));
+        assert!(second_page.iter().any(|line| line.contains("3 | 2026-05-01 22:01:00,303 gamma")));
 
         fs::remove_file(path).expect("cleanup file");
     }
@@ -241,6 +290,43 @@ mod tests {
         session.quarter_page_down(10);
 
         assert_eq!(session.top_index(), 2);
+
+        fs::remove_file(path).expect("cleanup file");
+    }
+
+    #[test]
+    fn render_lines_wraps_content_in_right_display_area() {
+        let path = std::env::temp_dir().join(format!(
+            "tinylog-session-wrap-{}.tog",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0, 1, 0]);
+        bytes.extend_from_slice(&0_u16.to_be_bytes());
+        bytes.extend_from_slice(&512_u16.to_be_bytes());
+        bytes.extend_from_slice(&1_777_672_860_253_u64.to_be_bytes());
+        bytes.extend_from_slice(&1_u64.to_be_bytes());
+        bytes.extend_from_slice(&[0, 0, 1]);
+        bytes.extend_from_slice(&1_u16.to_be_bytes());
+        let message = b"alpha beta\ngamma delta";
+        let mut trunk = Vec::new();
+        trunk.extend_from_slice(&0_u32.to_be_bytes());
+        trunk.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        trunk.extend_from_slice(message);
+        bytes.extend_from_slice(&(trunk.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&trunk);
+        fs::write(&path, bytes).expect("write prototype file");
+
+        let session =
+            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 4).expect("open session");
+        let rendered = session.render_lines(8, 24).expect("render wrapped page");
+
+        assert!(rendered.iter().any(|line| line.contains("1 | 2026-05-01 22:0")));
+        assert!(rendered.iter().any(|line| line.contains("| 253 alpha beta")));
+        assert!(rendered.iter().any(|line| line.contains("| gamma delta")));
 
         fs::remove_file(path).expect("cleanup file");
     }

@@ -62,9 +62,9 @@ impl ViewerApplication {
         stdout: &mut io::Stdout,
     ) -> Result<(), String> {
         loop {
-            let (_, height) =
+            let (width, height) =
                 terminal::size().map_err(|error| format!("failed to query terminal size: {error}"))?;
-            self.render(session, usize::from(height), stdout)?;
+            self.render(session, usize::from(height), usize::from(width), stdout)?;
             let event = event::read().map_err(|error| format!("failed to read key event: {error}"))?;
             if let Event::Key(key) = event {
                 if key.kind != KeyEventKind::Press {
@@ -95,9 +95,10 @@ impl ViewerApplication {
         &self,
         session: &InteractiveViewerSession,
         height: usize,
+        width: usize,
         stdout: &mut io::Stdout,
     ) -> Result<(), String> {
-        let lines = session.render_lines(height)?;
+        let lines = session.render_lines(height, width)?;
         execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(ClearType::All))
             .map_err(|error| format!("failed to clear screen: {error}"))?;
         for (index, line) in lines.iter().enumerate() {
