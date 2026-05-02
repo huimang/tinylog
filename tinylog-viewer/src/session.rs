@@ -1,5 +1,10 @@
 use crate::format;
 
+const HEADER_HEIGHT: usize = 1;
+const MIN_LINE_NUMBER_WIDTH: usize = 6;
+const FOCUS_MARKER_WIDTH: usize = 1;
+const CONTENT_PADDING_WIDTH: usize = 1;
+
 #[allow(dead_code)]
 /// Defines the business actions expected from an interactive log browsing session.
 pub trait ViewerSession {
@@ -35,12 +40,19 @@ pub struct RenderedFrame {
     pub rows: Vec<RenderedRow>,
 }
 
+/// Describes whether one rendered row owns the current focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowFocus {
+    Focused,
+    Unfocused,
+}
+
 /// Holds one rendered row split into left and right pane content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedRow {
     pub line_number: Option<String>,
     pub content: String,
-    pub is_current: bool,
+    pub focus: RowFocus,
 }
 
 impl InteractiveViewerSession {
@@ -76,69 +88,30 @@ impl InteractiveViewerSession {
 
     /// Renders the current visible window into a split-pane frame.
     pub fn render_frame(&mut self, height: usize, width: usize) -> Result<RenderedFrame, String> {
-        let line_number_width = self.total_records.to_string().len().max(6);
-        let content_width = width.saturating_sub(line_number_width + 2).max(1);
-        let visible_row_capacity = height.saturating_sub(1);
+        let line_number_width = self.line_number_width();
+        let content_width = self.content_width(width, line_number_width);
+        let visible_row_capacity = height.saturating_sub(HEADER_HEIGHT);
         let visible_record_count = self.visible_record_count(height);
-        self.top_index = self.resolve_top_index(content_width, visible_row_capacity, visible_record_count)?;
-        let mut rows = Vec::new();
-        let mut rendered_record_count = 0usize;
-        let header = format!(
-            "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
-            self.log_file,
-            self.total_records,
-            self.current_index.saturating_add(1)
-        );
-        let mut logical_index = self.top_index;
-        while rows.len() < visible_row_capacity
-            && logical_index < self.total_records
-            && rendered_record_count < visible_record_count
-        {
-            let rendered_content = self.rendered_content_for_entry(logical_index, content_width)?;
-            let logical_line_number = logical_index.saturating_add(1);
-            let is_current_entry = logical_index == self.current_index;
-            for (rendered_index, rendered_line) in rendered_content.into_iter().enumerate() {
-                rows.push(RenderedRow {
-                    line_number: if rendered_index == 0 {
-                        Some(logical_line_number.to_string())
-                    } else {
-                        None
-                    },
-                    content: rendered_line,
-                    is_current: is_current_entry,
-                });
-                if rows.len() >= visible_row_capacity {
-                    break;
-                }
-            }
-            logical_index = logical_index.saturating_add(1);
-            rendered_record_count = rendered_record_count.saturating_add(1);
-        }
-        let remaining = visible_row_capacity.saturating_sub(rows.len());
-        for _ in 0..remaining {
-            rows.push(RenderedRow {
-                line_number: None,
-                content: String::new(),
-                is_current: false,
-            });
-        }
+        self.top_index =
+            self.resolve_top_index(content_width, visible_row_capacity, visible_record_count)?;
+
         Ok(RenderedFrame {
-            header,
+            header: self.render_header(),
             line_number_width,
             content_width,
-            rows,
+            rows: self.collect_rows(content_width, visible_row_capacity, visible_record_count)?,
         })
     }
 
     /// Moves the window down by one record.
-    pub fn move_down(&mut self, _height: usize) {
+    pub fn move_down(&mut self) {
         if self.current_index.saturating_add(1) < self.total_records {
             self.current_index = self.current_index.saturating_add(1);
         }
     }
 
     /// Moves the window up by one record.
-    pub fn move_up(&mut self, _height: usize) {
+    pub fn move_up(&mut self) {
         self.current_index = self.current_index.saturating_sub(1);
     }
 
@@ -169,25 +142,131 @@ impl InteractiveViewerSession {
     }
 
     /// Moves the window to the last renderable page.
-    pub fn move_to_bottom(&mut self, height: usize) {
+    pub fn move_to_bottom(&mut self) {
         self.current_index = self.total_records.saturating_sub(1);
-        let _ = height;
     }
 
     /// Returns the visible record count derived from terminal height and configuration.
     fn visible_record_count(&self, height: usize) -> usize {
-        let terminal_page = height.saturating_sub(1).max(1);
+        let terminal_page = height.saturating_sub(HEADER_HEIGHT).max(1);
         usize::min(self.preferred_page_size, terminal_page).max(1)
     }
 
+    /// Returns the width needed for the line-number pane.
+    fn line_number_width(&self) -> usize {
+        self.total_records
+            .to_string()
+            .len()
+            .max(MIN_LINE_NUMBER_WIDTH)
+    }
+
+    /// Returns the width available for content after the viewer gutter columns.
+    fn content_width(&self, width: usize, line_number_width: usize) -> usize {
+        width
+            .saturating_sub(line_number_width + FOCUS_MARKER_WIDTH + CONTENT_PADDING_WIDTH)
+            .max(1)
+    }
+
+    /// Formats the header line for the current file and focused record.
+    fn render_header(&self) -> String {
+        format!(
+            "tinylog viewer | file={} | records={} | line={} | j/k move  enter +1/4  d/u page  g/G ends  q quit",
+            self.log_file,
+            self.total_records,
+            self.current_index.saturating_add(1)
+        )
+    }
+
+    /// Collects all rows that fit in the current viewport.
+    fn collect_rows(
+        &self,
+        content_width: usize,
+        visible_row_capacity: usize,
+        visible_record_count: usize,
+    ) -> Result<Vec<RenderedRow>, String> {
+        let mut rows = Vec::new();
+        let mut logical_index = self.top_index;
+        let mut rendered_record_count = 0usize;
+
+        while rows.len() < visible_row_capacity
+            && logical_index < self.total_records
+            && rendered_record_count < visible_record_count
+        {
+            let line_number = logical_index.saturating_add(1).to_string();
+            let focus = if logical_index == self.current_index {
+                RowFocus::Focused
+            } else {
+                RowFocus::Unfocused
+            };
+            let rendered_content = self.rendered_content_for_entry(logical_index, content_width)?;
+            self.push_entry_rows(
+                &mut rows,
+                visible_row_capacity,
+                &line_number,
+                rendered_content,
+                focus,
+            );
+            logical_index = logical_index.saturating_add(1);
+            rendered_record_count = rendered_record_count.saturating_add(1);
+        }
+
+        self.pad_rows(&mut rows, visible_row_capacity);
+        Ok(rows)
+    }
+
+    /// Appends the wrapped rows for one logical entry.
+    fn push_entry_rows(
+        &self,
+        rows: &mut Vec<RenderedRow>,
+        visible_row_capacity: usize,
+        line_number: &str,
+        rendered_content: Vec<String>,
+        focus: RowFocus,
+    ) {
+        for (rendered_index, rendered_line) in rendered_content.into_iter().enumerate() {
+            rows.push(RenderedRow {
+                line_number: if rendered_index == 0 {
+                    Some(line_number.to_string())
+                } else {
+                    None
+                },
+                content: rendered_line,
+                focus,
+            });
+            if rows.len() >= visible_row_capacity {
+                break;
+            }
+        }
+    }
+
+    /// Pads the viewport with blank rows.
+    fn pad_rows(&self, rows: &mut Vec<RenderedRow>, visible_row_capacity: usize) {
+        let remaining = visible_row_capacity.saturating_sub(rows.len());
+        for _ in 0..remaining {
+            rows.push(RenderedRow {
+                line_number: None,
+                content: String::new(),
+                focus: RowFocus::Unfocused,
+            });
+        }
+    }
+
     /// Formats one logical entry into wrapped content rows.
-    fn rendered_content_for_entry(&self, logical_index: usize, content_width: usize) -> Result<Vec<String>, String> {
-        let window = format::read_visible_window(&self.log_file, logical_index, 1)?;
-        let entry = window
+    fn rendered_content_for_entry(
+        &self,
+        logical_index: usize,
+        content_width: usize,
+    ) -> Result<Vec<String>, String> {
+        let entry = format::read_visible_window(&self.log_file, logical_index, 1)?
             .visible_entries
             .into_iter()
             .next()
-            .ok_or_else(|| format!("missing record at logical index {}", logical_index.saturating_add(1)))?;
+            .ok_or_else(|| {
+                format!(
+                    "missing record at logical index {}",
+                    logical_index.saturating_add(1)
+                )
+            })?;
         Ok(wrap_content(
             &format!(
                 "{} {}",
@@ -222,12 +301,16 @@ impl InteractiveViewerSession {
         let last_row_index = visible_row_capacity.saturating_sub(1);
         let mut rows_before_current = 0usize;
         for logical_index in top_index..self.current_index {
-            rows_before_current = rows_before_current
-                .saturating_add(self.rendered_content_for_entry(logical_index, content_width)?.len());
+            rows_before_current = rows_before_current.saturating_add(
+                self.rendered_content_for_entry(logical_index, content_width)?
+                    .len(),
+            );
         }
 
         while rows_before_current > last_row_index && top_index < self.current_index {
-            let top_rows = self.rendered_content_for_entry(top_index, content_width)?.len();
+            let top_rows = self
+                .rendered_content_for_entry(top_index, content_width)?
+                .len();
             rows_before_current = rows_before_current.saturating_sub(top_rows);
             top_index = top_index.saturating_add(1);
         }
@@ -284,7 +367,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::InteractiveViewerSession;
+    use crate::session::{InteractiveViewerSession, RowFocus};
 
     /// Builds one valid three-record prototype file for session tests.
     fn sample_bytes() -> Vec<u8> {
@@ -322,22 +405,29 @@ mod tests {
         ));
         fs::write(&path, sample_bytes()).expect("write prototype file");
 
-        let mut session =
-            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2).expect("open session");
+        let mut session = InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2)
+            .expect("open session");
         let first_page = session.render_frame(4, 80).expect("render first page");
-        session.move_down(4);
+        session.move_down();
         let second_page = session.render_frame(4, 80).expect("render second page");
 
         assert_eq!(first_page.rows[0].line_number.as_deref(), Some("1"));
-        assert!(first_page.rows[0].content.contains("2026-05-01 22:01:00,253 alpha"));
-        assert!(first_page.rows[0].is_current);
+        assert!(first_page.rows[0]
+            .content
+            .contains("2026-05-01 22:01:00,253 alpha"));
+        assert_eq!(first_page.rows[0].focus, RowFocus::Focused);
         assert_eq!(first_page.rows[1].line_number.as_deref(), Some("2"));
-        assert!(first_page.rows[1].content.contains("2026-05-01 22:01:00,278 beta"));
-        assert!(!first_page.rows.iter().any(|row| row.content.contains("gamma")));
+        assert!(first_page.rows[1]
+            .content
+            .contains("2026-05-01 22:01:00,278 beta"));
+        assert!(!first_page
+            .rows
+            .iter()
+            .any(|row| row.content.contains("gamma")));
         assert_eq!(session.top_index(), 0);
         assert_eq!(second_page.rows[0].line_number.as_deref(), Some("1"));
         assert_eq!(second_page.rows[1].line_number.as_deref(), Some("2"));
-        assert!(second_page.rows[1].is_current);
+        assert_eq!(second_page.rows[1].focus, RowFocus::Focused);
 
         fs::remove_file(path).expect("cleanup file");
     }
@@ -353,9 +443,9 @@ mod tests {
         ));
         fs::write(&path, sample_bytes()).expect("write prototype file");
 
-        let mut session =
-            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2).expect("open session");
-        session.move_to_bottom(4);
+        let mut session = InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 2)
+            .expect("open session");
+        session.move_to_bottom();
         let _ = session.render_frame(4, 80).expect("render bottom page");
 
         assert_eq!(session.top_index(), 1);
@@ -375,8 +465,8 @@ mod tests {
         ));
         fs::write(&path, sample_bytes()).expect("write prototype file");
 
-        let mut session =
-            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8).expect("open session");
+        let mut session = InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8)
+            .expect("open session");
         session.quarter_page_down(10);
         let _ = session.render_frame(10, 80).expect("render quarter page");
 
@@ -414,21 +504,23 @@ mod tests {
         bytes.extend_from_slice(&trunk);
         fs::write(&path, bytes).expect("write prototype file");
 
-        let mut session =
-            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8).expect("open session");
+        let mut session = InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 8)
+            .expect("open session");
         for _ in 0..3 {
-            session.move_down(5);
+            session.move_down();
         }
-        let bottom_frame = session.render_frame(5, 80).expect("render bottom edge page");
-        session.move_down(5);
+        let bottom_frame = session
+            .render_frame(5, 80)
+            .expect("render bottom edge page");
+        session.move_down();
         let scrolled_frame = session.render_frame(5, 80).expect("render scrolled page");
 
         assert_eq!(session.current_index(), 4);
         assert_eq!(session.top_index(), 1);
         assert_eq!(bottom_frame.rows[3].line_number.as_deref(), Some("4"));
-        assert!(bottom_frame.rows[3].is_current);
+        assert_eq!(bottom_frame.rows[3].focus, RowFocus::Focused);
         assert_eq!(scrolled_frame.rows[3].line_number.as_deref(), Some("5"));
-        assert!(scrolled_frame.rows[3].is_current);
+        assert_eq!(scrolled_frame.rows[3].focus, RowFocus::Focused);
 
         fs::remove_file(path).expect("cleanup file");
     }
@@ -459,16 +551,16 @@ mod tests {
         bytes.extend_from_slice(&trunk);
         fs::write(&path, bytes).expect("write prototype file");
 
-        let mut session =
-            InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 4).expect("open session");
+        let mut session = InteractiveViewerSession::open(path.to_string_lossy().into_owned(), 4)
+            .expect("open session");
         let rendered = session.render_frame(8, 24).expect("render wrapped page");
 
         assert_eq!(rendered.rows[0].line_number.as_deref(), Some("1"));
         assert!(rendered.rows[0].content.contains("2026-05-01 22:0"));
-        assert!(rendered.rows[0].is_current);
+        assert_eq!(rendered.rows[0].focus, RowFocus::Focused);
         assert_eq!(rendered.rows[1].line_number, None);
         assert!(!rendered.rows[1].content.is_empty());
-        assert!(rendered.rows[1].is_current);
+        assert_eq!(rendered.rows[1].focus, RowFocus::Focused);
         assert!(rendered
             .rows
             .iter()

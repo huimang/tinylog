@@ -1,9 +1,12 @@
+use std::{
+    fs,
+    io::{BufReader, Cursor, Read},
+};
+
 use bzip2::read::BzDecoder;
 use chrono::{TimeZone, Utc};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use snap::read::FrameDecoder;
-use std::fs;
-use std::io::{BufReader, Cursor, Read};
 use xz2::read::XzDecoder;
 use zip::ZipArchive;
 
@@ -52,13 +55,20 @@ pub fn read_file(path: &str) -> Result<Vec<ParsedLogEntry>, String> {
 }
 
 /// Reads only the currently visible window from one trunk-based tinylog file.
-pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize) -> Result<VisibleLogWindow, String> {
+pub fn read_visible_window(
+    path: &str,
+    start_index: usize,
+    visible_count: usize,
+) -> Result<VisibleLogWindow, String> {
     let file = fs::File::open(path).map_err(|error| format!("failed to read {path}: {error}"))?;
     let mut reader = BufReader::new(file);
     let header = read_header_from_reader(&mut reader)?;
     let total_records_usize = usize::try_from(header.total_records).unwrap_or(usize::MAX);
     let start_index = usize::min(start_index, total_records_usize);
-    let end_index = usize::min(start_index.saturating_add(visible_count), total_records_usize);
+    let end_index = usize::min(
+        start_index.saturating_add(visible_count),
+        total_records_usize,
+    );
     if start_index >= end_index {
         return Ok(VisibleLogWindow {
             total_records: header.total_records,
@@ -86,12 +96,21 @@ pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize)
         reader
             .read_exact(&mut compressed_content)
             .map_err(|_| "prototype log file is truncated".to_string())?;
-        let raw_trunk_bytes = header.compression_algorithm.decompress(compressed_content)?;
-        let trunk_entries =
-            parse_raw_trunk_payload(&raw_trunk_bytes, header.base_timestamp_millis, trunk_log_line_count)?;
+        let raw_trunk_bytes = header
+            .compression_algorithm
+            .decompress(compressed_content)?;
+        let trunk_entries = parse_raw_trunk_payload(
+            &raw_trunk_bytes,
+            header.base_timestamp_millis,
+            trunk_log_line_count,
+        )?;
         let local_start = start_index.saturating_sub(trunk_start);
         let local_end = usize::min(trunk_entries.len(), end_index.saturating_sub(trunk_start));
-        for entry in trunk_entries.into_iter().skip(local_start).take(local_end.saturating_sub(local_start)) {
+        for entry in trunk_entries
+            .into_iter()
+            .skip(local_start)
+            .take(local_end.saturating_sub(local_start))
+        {
             visible_entries.push(entry);
         }
         global_index = trunk_end;
@@ -108,8 +127,8 @@ pub fn read_visible_window(path: &str, start_index: usize, visible_count: usize)
 
 /// Formats persisted UTC milliseconds as the human-readable normal log timestamp shape.
 pub fn format_timestamp_millis(timestamp_millis: u64) -> Result<String, String> {
-    let timestamp_millis =
-        i64::try_from(timestamp_millis).map_err(|_| "timestamp exceeds supported range".to_string())?;
+    let timestamp_millis = i64::try_from(timestamp_millis)
+        .map_err(|_| "timestamp exceeds supported range".to_string())?;
     let date_time = Utc
         .timestamp_millis_opt(timestamp_millis)
         .single()
@@ -128,7 +147,9 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Vec<ParsedLogEntry>, String> {
         let trunk_log_line_count = usize::from(cursor.read_u16()?);
         let compressed_content_length = cursor.read_u32()? as usize;
         let compressed_content = cursor.read_exact(compressed_content_length)?.to_vec();
-        let raw_trunk_bytes = header.compression_algorithm.decompress(compressed_content)?;
+        let raw_trunk_bytes = header
+            .compression_algorithm
+            .decompress(compressed_content)?;
         entries.extend(parse_raw_trunk_payload(
             &raw_trunk_bytes,
             header.base_timestamp_millis,
@@ -376,8 +397,8 @@ impl<'a> CursorReader<'a> {
 
 #[cfg(test)]
 mod tests {
-    use flate2::Compression;
     use flate2::write::GzEncoder;
+    use flate2::Compression;
     use std::fs;
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -402,7 +423,10 @@ mod tests {
 
     fn build_none_file(lines_by_trunk: Vec<Vec<(u32, &str)>>) -> Vec<u8> {
         let base_timestamp = 1_777_672_860_253_u64;
-        let total_records = lines_by_trunk.iter().map(|trunk| trunk.len() as u64).sum::<u64>();
+        let total_records = lines_by_trunk
+            .iter()
+            .map(|trunk| trunk.len() as u64)
+            .sum::<u64>();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&[0, 1, 0]);
         bytes.extend_from_slice(&0_u16.to_be_bytes());
@@ -463,7 +487,8 @@ mod tests {
         bytes.extend_from_slice(b"be");
         fs::write(&path, bytes).expect("write prototype file");
 
-        let window = read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
+        let window =
+            read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
 
         assert_eq!(window.total_records, 1);
         assert_eq!(window.visible_entries.len(), 1);
@@ -500,7 +525,8 @@ mod tests {
         bytes.extend_from_slice(&gzip_payload);
         fs::write(&path, bytes).expect("write gzip prototype file");
 
-        let window = read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
+        let window =
+            read_visible_window(&path.to_string_lossy(), 0, 1).expect("read visible window");
 
         assert_eq!(window.visible_entries[0].content, "alpha");
 
@@ -533,7 +559,8 @@ mod tests {
         bytes.extend_from_slice(&second_trunk);
         fs::write(&path, bytes).expect("write prototype file");
 
-        let window = read_visible_window(&path.to_string_lossy(), 1, 1).expect("read visible window");
+        let window =
+            read_visible_window(&path.to_string_lossy(), 1, 1).expect("read visible window");
 
         assert_eq!(window.visible_entries.len(), 1);
         assert_eq!(window.visible_entries[0].content, "beta");
