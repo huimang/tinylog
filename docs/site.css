@@ -69,14 +69,12 @@ pre {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
-  font-size: 1.125rem;
-  font-weight: 700;
 }
 
 .brand img {
-  width: 42px;
-  height: 42px;
+  width: 176px;
+  height: auto;
+  display: block;
 }
 
 .nav-links {
