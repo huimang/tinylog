@@ -30,7 +30,7 @@ The project is initialized around two product surfaces:
 | Module | Responsibility |
 | --- | --- |
 | `tinylog-core` | Core log domain model, codec abstractions, and reader/writer contracts |
-| `tinylog-sdk` | Business-facing Java logging API, logger factories, and SLF4J 2.0.17 bridge support |
+| `tinylog-sdk` | Business-facing Java logging API, logger factories, direct `.tog` file backend, and SLF4J 2.0.17 bridge support |
 | `tinylog-rust-common` | Shared Rust TinyLog format and protobuf support |
 | `tinylog-converter` | Rust CLI for converting plaintext logs into `.tog` files |
 | `tinylog-viewer` | Rust CLI for interactive TinyLog browsing |
@@ -43,7 +43,7 @@ Repository collaboration rules, engineering conventions, and commit conventions 
 
 - **Java namespace**: `com.huimang.tinylog`
 - **Java build**: Maven multi-module project for `tinylog-core` and `tinylog-sdk`
-- **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration
+- **Java SDK compatibility**: `slf4j-api:2.0.17` with verified `slf4j-simple:2.0.17` integration plus a direct `.tog` file logger factory
 - **Rust workspace**: split into `tinylog-rust-common`, `tinylog-converter`, and `tinylog-viewer`
 - **Shared contract**: protobuf schema in `tinylog-core/src/main/proto/tinylog/prototype.proto`
 - **Java protobuf generation notes**: `docs/protobuf-java-generation.md`
@@ -91,6 +91,12 @@ Helper script:
 scripts/tinylog-convert.sh normal.log
 ```
 
+Reverse conversion is also available:
+
+```bash
+scripts/tinylog-convert.sh --reverse normal.tog
+```
+
 Expected output:
 
 ```text
@@ -126,6 +132,20 @@ Helper scripts:
 ```bash
 scripts/tinylog-view.sh normal.tog
 scripts/tinylog-open.sh normal.log
+```
+
+## Java Example Project
+
+`tinylog-example` now includes:
+
+- `TinylogSdkYamlExample`: console + `.tog` output demo
+- `TinylogLargeTogExample`: generates a large `.tog` fixture, defaulting to roughly `120 MiB`
+
+Example command:
+
+```bash
+java -cp "tinylog-example/target/classes:tinylog-sdk/target/classes:tinylog-core/target/classes:$HOME/.m2/repository/org/yaml/snakeyaml/2.2/snakeyaml-2.2.jar" \
+  com.huimang.tinylog.example.TinylogLargeTogExample
 ```
 
 Key bindings:

@@ -51,6 +51,7 @@ Code should include comments or doc comments unless the intent is completely obv
 
 - Every relatively complete, stable feature should be committed immediately
 - If several commits were created while iterating on the same feature or fix, they should be squashed into one clean feature-level commit before continuing
+- One commit should cover one coherent feature boundary; do not mix unrelated features, refactors, examples, and tooling changes into the same commit unless they are inseparable parts of the same behavior change
 
 Example commit message style:
 

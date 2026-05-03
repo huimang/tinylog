@@ -2,7 +2,7 @@
 
 > Status: **implemented prototype**
 >
-> This document describes the current trunk-based `.tog` prototype used by the Rust converter and Rust viewer.
+> This document describes the current trunk-based `.tog` prototype used by the Java writer, Rust converter, and Rust viewer.
 
 ## Purpose
 
@@ -21,7 +21,7 @@ Goals:
 - **Storage unit**: `trunk`
 - **Default trunk size**: `512 KB`
 - **Base timestamp**: one file-level UTC timestamp in the header
-- **Write path**: the Rust converter builds trunk byte ranges directly from the source log, lets workers compress contiguous trunk batches in parallel for large inputs, and merges the worker outputs into the final `.tog` file
+- **Write path**: the Java writer appends into an in-memory trunk buffer and mirrors the not-yet-merged raw records into a `.buffer` sidecar file, while the Rust converter builds trunk byte ranges directly from the source log, lets workers compress contiguous trunk batches in parallel for large inputs, and merges the worker outputs into the final `.tog` file
 
 ## File Header
 
@@ -132,6 +132,15 @@ Before compression, a trunk contains raw log lines in sequence:
 ...
 ```
 
+When the Java writer has raw records that have not been merged into a completed trunk yet, it also keeps a sidecar buffer file next to the main file:
+
+```text
+app.tog
+app.tog.buffer
+```
+
+The sidecar begins with the same `baseTimestampUtcMillis` and then stores raw lines in the same `[offsetMillis][level][contentLength][content]` layout used inside a trunk.
+
 Or expanded:
 
 ```text
@@ -194,19 +203,21 @@ The current write workflow is implemented by the Rust converter. Small inputs st
 ### Write Steps
 
 1. Create the main `.tog` file and initialize the header
-2. For inputs up to `100 MiB`, parse records serially and flush trunks directly from the converter process
-3. For larger inputs:
+2. For the Java writer, create or reset the `.buffer` sidecar file for not-yet-merged raw records
+3. For inputs up to `100 MiB`, parse records serially and flush trunks directly from the converter process
+4. For larger inputs:
    1. jump forward by the configured trunk size in bytes
    2. align each boundary to the next record-start marker (`newline + timestamp-like prefix`)
    3. use the resulting byte ranges as planned trunks
    4. assign consecutive trunk ranges to workers
-4. Each worker reads its planned source bytes, parses the first timestamped line as a new record, and appends any following non-timestamp lines to that record as multiline continuation content
-5. Each worker encodes `[offsetMillis:4][level:1][contentLength:4][content]`, compresses the whole trunk, and reports record counts plus timestamp metadata back to the master
-6. The master merges worker outputs in order and writes the final `totalLogLineCount` and `trunkCount` values into the header
+5. Each worker reads its planned source bytes, parses the first timestamped line as a new record, and appends any following non-timestamp lines to that record as multiline continuation content
+6. Each worker encodes `[offsetMillis:4][level:1][contentLength:4][content]`, compresses the whole trunk, and reports record counts plus timestamp metadata back to the master
+7. The Java writer clears the `.buffer` sidecar whenever the in-memory trunk is successfully merged into the main `.tog` file, including normal close and log rotation
+8. The master merges worker outputs in order and writes the final `totalLogLineCount` and `trunkCount` values into the header
 
 ## Read and Browse Workflow
 
-The reader/viewer works against the header plus the appended trunk sequence.
+The reader/viewer works against the header plus the appended trunk sequence. When a Java `.buffer` sidecar is present and still contains raw records, the reader appends those buffered records after the persisted trunks so graceful-close and crash-recovery reads stay consistent.
 
 ### Read Flow Diagram
 
@@ -285,7 +296,7 @@ This redesign is **not backward compatible** with the current prototype layout.
 Implications:
 
 1. Existing `.tog` files produced by the old format will need reconversion
-2. Any writer/reader implementation must switch together; the current implemented workflow is the Rust converter plus Rust viewer
+2. Any writer/reader implementation must switch together; the currently implemented write paths are the Java writer and the Rust converter, and the current browser is the Rust viewer
 3. Tests must be updated to cover:
    - version byte parsing
    - trunk flushing

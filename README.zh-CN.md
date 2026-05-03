@@ -30,7 +30,7 @@
 | 模块 | 职责 |
 | --- | --- |
 | `tinylog-core` | 核心日志领域模型、编解码抽象、读写接口 |
-| `tinylog-sdk` | 面向业务的 Java 日志 API、工厂、SLF4J 2.0.17 桥接 |
+| `tinylog-sdk` | 面向业务的 Java 日志 API、工厂、直接写 `.tog` 的 file backend，以及 SLF4J 2.0.17 桥接 |
 | `tinylog-rust-common` | Rust 侧共享的 TinyLog 格式与 protobuf 契约支持 |
 | `tinylog-converter` | 用于把明文日志转换成 `.tog` 的 Rust CLI |
 | `tinylog-viewer` | 用于交互式浏览 TinyLog 文件的 Rust CLI |
@@ -43,7 +43,7 @@
 
 - **Java 命名空间**：`com.huimang.tinylog`
 - **Java 构建**：`tinylog-core` 和 `tinylog-sdk` 的 Maven 多模块工程
-- **Java SDK 兼容性**：`slf4j-api:2.0.17`，并已验证 `slf4j-simple:2.0.17`
+- **Java SDK 兼容性**：`slf4j-api:2.0.17`，并已验证 `slf4j-simple:2.0.17`，同时提供直接写 `.tog` 的 file logger factory
 - **Rust Workspace**：拆分为 `tinylog-rust-common`、`tinylog-converter` 和 `tinylog-viewer`
 - **共享契约**：protobuf 定义位于 `tinylog-core/src/main/proto/tinylog/prototype.proto`
 - **Java protobuf 生成说明**：`docs/zh-CN/protobuf-java-generation.md`
@@ -91,6 +91,12 @@ cargo run --quiet --manifest-path tinylog-converter/Cargo.toml -- normal.log nor
 scripts/tinylog-convert.sh normal.log
 ```
 
+也支持反向恢复：
+
+```bash
+scripts/tinylog-convert.sh --reverse normal.tog
+```
+
 期望输出：
 
 ```text
@@ -126,6 +132,20 @@ cargo run --quiet --manifest-path tinylog-viewer/Cargo.toml -- normal.tog
 ```bash
 scripts/tinylog-view.sh normal.tog
 scripts/tinylog-open.sh normal.log
+```
+
+## Java 示例工程
+
+`tinylog-example` 现在包含：
+
+- `TinylogSdkYamlExample`：console + `.tog` 输出示例
+- `TinylogLargeTogExample`：生成大体量 `.tog` 示例，默认目标约 `120 MiB`
+
+示例命令：
+
+```bash
+java -cp "tinylog-example/target/classes:tinylog-sdk/target/classes:tinylog-core/target/classes:$HOME/.m2/repository/org/yaml/snakeyaml/2.2/snakeyaml-2.2.jar" \
+  com.huimang.tinylog.example.TinylogLargeTogExample
 ```
 
 按键说明：

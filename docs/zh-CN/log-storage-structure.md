@@ -2,7 +2,7 @@
 
 > 状态：**已实现的原型**
 >
-> 本文档描述当前已经落地的 trunk-based `.tog` 原型，以及 Rust converter 和 Rust viewer 的实际行为。
+> 本文档描述当前已经落地的 trunk-based `.tog` 原型，以及 Java writer、Rust converter 和 Rust viewer 的实际行为。
 
 ## 设计目标
 
@@ -21,7 +21,7 @@
 - **存储单元**：`trunk`
 - **默认 trunk 大小**：`512 KB`
 - **基准时间**：文件 header 中保存一个全局 UTC 基准时间戳
-- **写入路径**：Rust converter 会直接从源日志构建 trunk 字节区间；大文件下由多个 worker 并行压缩连续 trunk 批次，最后由 master 顺序合并到最终 `.tog` 文件
+- **写入路径**：Java writer 会先写入内存中的 trunk buffer，并把尚未合并进主文件的原始记录镜像到 `.buffer` sidecar 文件；Rust converter 会直接从源日志构建 trunk 字节区间；大文件下由多个 worker 并行压缩连续 trunk 批次，最后由 master 顺序合并到最终 `.tog` 文件
 
 ## 文件 Header 结构
 
@@ -132,6 +132,15 @@
 ...
 ```
 
+当 Java writer 还有尚未并入完整 trunk 的原始记录时，会在主文件旁边保留一个 sidecar buffer 文件：
+
+```text
+app.tog
+app.tog.buffer
+```
+
+这个 sidecar 先写入同一个 `baseTimestampUtcMillis`，后面继续使用与 trunk 内部一致的 `[offsetMillis][level][contentLength][content]` 布局保存原始记录。
+
 展开后可表示为：
 
 ```text
@@ -191,19 +200,21 @@
 ### 写入步骤
 
 1. 创建主 `.tog` 文件并初始化 header
-2. 对于不超过 `100 MiB` 的输入，直接在单进程串行解析并刷出 trunk
-3. 对于更大的输入：
+2. 对于 Java writer，同时创建或清空 `.buffer` sidecar 文件，用于保存尚未并入主文件的原始记录
+3. 对于不超过 `100 MiB` 的输入，直接在单进程串行解析并刷出 trunk
+4. 对于更大的输入：
    1. 按配置的 trunk 字节大小向前跳转
    2. 把每个边界对齐到下一个记录起点（`\n` 后接时间戳形态前缀）
    3. 用这些字节区间作为 trunk 规划结果
    4. 把连续 trunk 区间分配给 worker
-4. 每个 worker 读取自己负责的源字节区间；遇到带时间戳的行就开始新记录，后续非时间戳行则并入上一条记录，作为 multiline continuation
-5. worker 生成 `[offsetMillis:4][level:1][contentLength:4][content]`，压缩整个 trunk，并把记录数与时间戳元信息回传给 master
-6. master 按顺序合并 worker 输出，并最终写回 `totalLogLineCount` 和 `trunkCount`
+5. 每个 worker 读取自己负责的源字节区间；遇到带时间戳的行就开始新记录，后续非时间戳行则并入上一条记录，作为 multiline continuation
+6. worker 生成 `[offsetMillis:4][level:1][contentLength:4][content]`，压缩整个 trunk，并把记录数与时间戳元信息回传给 master
+7. Java writer 在内存 trunk 成功合并进主 `.tog` 文件后，会清空 `.buffer` sidecar；正常关闭和日志轮转都走这条路径
+8. master 按顺序合并 worker 输出，并最终写回 `totalLogLineCount` 和 `trunkCount`
 
 ## 读取与浏览流程
 
-读取端和 viewer 都以 header + trunk 序列的方式工作。
+读取端和 viewer 都以 header + trunk 序列的方式工作。如果检测到 Java sidecar `.buffer` 文件中还有尚未合并的原始记录，reader 会把这些记录接在已持久化 trunk 后面一起读出来，这样正常关闭补写和异常退出后的恢复读取都保持一致。
 
 ### 读取流程图
 
@@ -282,7 +293,7 @@ Rust viewer 仍然保持轻量级 vim 风格浏览：
 影响如下：
 
 1. 旧版 `.tog` 文件需要重新转换
-2. 任何 writer/reader 实现都必须一起切换；当前已经落地的是 Rust converter + Rust viewer 这一套流程
+2. 任何 writer/reader 实现都必须一起切换；当前已经落地的写入路径包括 Java writer 和 Rust converter，浏览端是 Rust viewer
 3. 测试需要覆盖：
    - 版本号写入与解析
    - trunk 刷盘逻辑
