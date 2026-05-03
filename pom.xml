@@ -15,6 +15,7 @@
     <modules>
         <module>tinylog-core</module>
         <module>tinylog-sdk</module>
+        <module>tinylog-example</module>
     </modules>
 
     <properties>

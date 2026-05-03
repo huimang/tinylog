@@ -1,0 +1,34 @@
+tinylog:
+  root:
+    level: trace
+    appenders:
+      - console
+      - infoFile
+  appenders:
+    console:
+      type: console
+      target: SYSTEM_OUT
+      level: trace
+      pattern: "[%logger] requestId=%var{requestId:-missing} user=%env{USER:-unknown} %message"
+    infoFile:
+      type: file
+      level: info
+      fileName: logs/tinylog-example.tog
+      filePattern: logs/archive/tinylog-example-%i.tog
+      format: tog
+      compression: gzip
+      trunkSizeKb: 512
+      pattern: "[%logger] requestId=%var{requestId:-missing} userId=%var{userId:-missing} %message"
+      policies:
+        size:
+          size: 256KB
+      strategy:
+        max: 3
+  masking:
+    contentRules:
+      - password
+      - mobile
+      - email
+    variableRules:
+      userId: partial
+      requestId: partial

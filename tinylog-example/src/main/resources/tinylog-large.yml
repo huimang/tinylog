@@ -1,0 +1,27 @@
+tinylog:
+  root:
+    level: trace
+    appenders:
+      - togFile
+  appenders:
+    togFile:
+      type: file
+      level: trace
+      fileName: logs/tinylog-large-example.tog
+      filePattern: logs/archive/tinylog-large-example-%i.tog
+      format: tog
+      compression: gzip
+      trunkSizeKb: 512
+      pattern: "[%logger] requestId=%var{requestId:-missing} userId=%var{userId:-missing} %message"
+      policies:
+        size:
+          size: 256MB
+      strategy:
+        max: 2
+  masking:
+    contentRules:
+      - password
+      - email
+    variableRules:
+      userId: partial
+      requestId: partial
