@@ -8,7 +8,7 @@ public final class NoopTinyLoggerFactory implements TinyLoggerFactory {
     /**
      * Returns a logger that preserves the requested business name.
      */
-    public TinyLogger getLogger(String name) {
+    public Logger getLogger(String name) {
         return new NoopTinyLogger(name);
     }
 }

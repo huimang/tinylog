@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 public class Slf4jTinyLoggerFactoryTest {
     @Test
     void shouldCreateTinyLoggerBackedBySlf4jApi() {
-        TinyLogger logger = new Slf4jTinyLoggerFactory().getLogger(Slf4jTinyLoggerFactoryTest.class);
+        Logger logger = new Slf4jTinyLoggerFactory().getLogger(Slf4jTinyLoggerFactoryTest.class);
 
         assertInstanceOf(Slf4jTinyLogger.class, logger);
         assertEquals(Slf4jTinyLoggerFactoryTest.class.getName(), logger.getName());

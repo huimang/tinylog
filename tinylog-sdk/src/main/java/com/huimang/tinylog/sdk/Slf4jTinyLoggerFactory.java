@@ -32,7 +32,7 @@ public final class Slf4jTinyLoggerFactory implements TinyLoggerFactory {
     }
 
     @Override
-    public TinyLogger getLogger(String name) {
+    public Logger getLogger(String name) {
         return new Slf4jTinyLogger(delegate.getLogger(name));
     }
 }

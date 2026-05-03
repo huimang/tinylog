@@ -5,7 +5,7 @@ import java.util.Objects;
 /**
  * Provides a safe default logger that accepts calls but emits nothing.
  */
-public final class NoopTinyLogger implements TinyLogger {
+public final class NoopTinyLogger implements Logger {
     private final String name;
 
     /**

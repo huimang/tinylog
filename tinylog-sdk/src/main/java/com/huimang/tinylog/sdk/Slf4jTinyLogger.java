@@ -1,25 +1,24 @@
 package com.huimang.tinylog.sdk;
 
 import java.util.Objects;
-import org.slf4j.Logger;
 
 /**
  * Adapts one SLF4J logger to the TinyLog business-facing logger contract.
  */
-public final class Slf4jTinyLogger implements TinyLogger {
-    private final Logger delegate;
+public final class Slf4jTinyLogger implements com.huimang.tinylog.sdk.Logger {
+    private final org.slf4j.Logger delegate;
 
     /**
      * Creates a TinyLog logger backed by one SLF4J logger instance.
      */
-    public Slf4jTinyLogger(Logger delegate) {
+    public Slf4jTinyLogger(org.slf4j.Logger delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
     /**
      * Returns the wrapped SLF4J logger for integration-oriented scenarios.
      */
-    public Logger getDelegate() {
+    public org.slf4j.Logger getDelegate() {
         return delegate;
     }
 
