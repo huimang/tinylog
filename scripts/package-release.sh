@@ -48,6 +48,8 @@ cp "${repo_root}/target/release/tinylog-converter" "${package_dir}/bin/"
 cp "${repo_root}/target/release/tinylog-viewer" "${package_dir}/bin/"
 cp "${repo_root}/LICENSE" "${package_dir}/"
 cp "${repo_root}/README.md" "${package_dir}/"
+cp "${repo_root}/README.zh-CN.md" "${package_dir}/"
+cp -R "${repo_root}/assets" "${package_dir}/"
 
 rm -f "${archive_path}"
 tar -C "${package_root}" -czf "${archive_path}" "${package_name}"
