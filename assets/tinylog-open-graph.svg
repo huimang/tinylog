@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">TinyLog open graph card</title>
+  <desc id="desc">Project card for TinyLog, a high-density log storage and low-memory log browsing project.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#09101d"/>
+      <stop offset="55%" stop-color="#0e1b31"/>
+      <stop offset="100%" stop-color="#102745"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#4ade80" stop-opacity="0.10"/>
+    </linearGradient>
+    <filter id="softBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" rx="36" fill="url(#bg)"/>
+  <circle cx="1020" cy="86" r="180" fill="#22d3ee" opacity="0.16" filter="url(#softBlur)"/>
+  <circle cx="1110" cy="560" r="220" fill="#4ade80" opacity="0.10" filter="url(#softBlur)"/>
+
+  <g opacity="0.55">
+    <rect x="60" y="60" width="1160" height="520" rx="28" fill="none" stroke="#28415e" stroke-width="2"/>
+    <rect x="780" y="126" width="380" height="316" rx="24" fill="#0a1527" stroke="#274261" stroke-width="2"/>
+    <rect x="808" y="164" width="324" height="22" rx="11" fill="#11233d"/>
+    <rect x="808" y="204" width="288" height="16" rx="8" fill="#133154"/>
+    <rect x="808" y="240" width="244" height="16" rx="8" fill="#103458"/>
+    <rect x="808" y="296" width="322" height="56" rx="16" fill="#0f223d" stroke="#204367" stroke-width="2"/>
+    <rect x="828" y="316" width="66" height="20" rx="10" fill="#ef4444"/>
+    <rect x="908" y="316" width="72" height="20" rx="10" fill="#f59e0b"/>
+    <rect x="996" y="316" width="88" height="20" rx="10" fill="#22c55e"/>
+    <rect x="808" y="390" width="146" height="20" rx="10" fill="#22d3ee"/>
+    <rect x="970" y="390" width="162" height="20" rx="10" fill="#60a5fa"/>
+  </g>
+
+  <g transform="translate(92 110)">
+    <rect x="0" y="0" width="164" height="164" rx="36" fill="url(#glow)" opacity="0.9"/>
+    <rect x="8" y="8" width="148" height="148" rx="32" fill="#0f1e34" stroke="#2f5274" stroke-width="2"/>
+    <image href="tinylog-logo.svg" x="22" y="22" width="120" height="120"/>
+  </g>
+
+  <g fill="#eaf2ff">
+    <text x="292" y="194" font-family="Arial, Helvetica, sans-serif" font-size="94" font-weight="700">TinyLog</text>
+    <text x="292" y="252" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="400" fill="#94a3b8">
+      High-density log storage and low-memory log browsing
+    </text>
+  </g>
+
+  <g transform="translate(92 314)">
+    <text x="0" y="0" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#f8fbff">
+      Compress less noise. Browse more signal.
+    </text>
+    <text x="0" y="54" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="400" fill="#b5c2d6">
+      Java SDK for application logging, Rust tools for .tog conversion and interactive viewing.
+    </text>
+  </g>
+
+  <g transform="translate(92 446)" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">
+    <rect x="0" y="0" width="148" height="46" rx="23" fill="#123352" stroke="#265b87"/>
+    <text x="74" y="31" text-anchor="middle" fill="#dff5ff">Java SDK</text>
+
+    <rect x="166" y="0" width="162" height="46" rx="23" fill="#102d49" stroke="#2c7fb8"/>
+    <text x="247" y="31" text-anchor="middle" fill="#d9efff">.tog Format</text>
+
+    <rect x="346" y="0" width="162" height="46" rx="23" fill="#123428" stroke="#2f9e62"/>
+    <text x="427" y="31" text-anchor="middle" fill="#e4fff0">Rust Viewer</text>
+  </g>
+
+  <g transform="translate(92 532)" font-family="Arial, Helvetica, sans-serif">
+    <text x="0" y="0" font-size="22" font-weight="400" fill="#7dd3fc">github.com/huimang/tinylog</text>
+    <text x="1096" y="0" text-anchor="end" font-size="22" font-weight="400" fill="#7dd3fc">v0.1.0</text>
+  </g>
+</svg>

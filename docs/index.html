@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TinyLog</title>
+  <meta
+    name="description"
+    content="TinyLog is a high-density log storage and low-memory log browsing project with a Java SDK and Rust tools."
+  />
+  <meta property="og:title" content="TinyLog" />
+  <meta
+    property="og:description"
+    content="High-density log storage and low-memory log browsing with a Java SDK and Rust tools."
+  />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="assets/tinylog-open-graph.png" />
+  <meta property="og:image:alt" content="TinyLog project card" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TinyLog" />
+  <meta
+    name="twitter:description"
+    content="High-density log storage and low-memory log browsing with a Java SDK and Rust tools."
+  />
+  <meta name="twitter:image" content="assets/tinylog-open-graph.png" />
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+  <header class="hero">
+    <nav class="topbar">
+      <a class="brand" href="./">
+        <img src="assets/tinylog-logo.svg" alt="TinyLog logo" />
+        <span>TinyLog</span>
+      </a>
+      <div class="nav-links">
+        <a href="https://github.com/huimang/tinylog">GitHub</a>
+        <a href="https://github.com/huimang/tinylog/releases/tag/v0.1.0">Release</a>
+        <a href="https://github.com/huimang/tinylog/blob/main/README.zh-CN.md">中文</a>
+      </div>
+    </nav>
+
+    <section class="hero-content">
+      <div class="hero-copy">
+        <p class="eyebrow">Java SDK + Rust Tools</p>
+        <h1>Compress less noise.<br />Browse more signal.</h1>
+        <p class="lead">
+          TinyLog is built for <strong>high-density log storage</strong> and
+          <strong>low-memory log browsing</strong>. It turns huge plaintext logs
+          into a compact <code>.tog</code> format and keeps large-file navigation fast.
+        </p>
+        <div class="cta-row">
+          <a class="button primary" href="https://github.com/huimang/tinylog/releases/download/v0.1.0/tinylog-v0.1.0-darwin-arm64.tar.gz">Download v0.1.0</a>
+          <a class="button secondary" href="https://github.com/huimang/tinylog">View repository</a>
+        </div>
+        <ul class="quick-points">
+          <li>Business-facing Java logging API</li>
+          <li>Chunked <code>.tog</code> storage for better density</li>
+          <li>Interactive Rust viewer with search and jump</li>
+        </ul>
+      </div>
+      <div class="hero-art">
+        <img src="assets/tinylog-demo.gif" alt="TinyLog terminal demo" />
+      </div>
+    </section>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">Why TinyLog</p>
+        <h2>Built around two real log pain points</h2>
+      </div>
+      <div class="grid three">
+        <article class="card">
+          <h3>Storage overhead</h3>
+          <p>Plaintext logs repeat structure and metadata on every line. TinyLog compacts that redundancy into a denser binary layout.</p>
+        </article>
+        <article class="card">
+          <h3>Read amplification</h3>
+          <p>Huge log files are expensive to scan in memory. TinyLog uses trunk-based reads to keep browsing and filtering lightweight.</p>
+        </article>
+        <article class="card">
+          <h3>Workflow fit</h3>
+          <p>Applications can write through a Java SDK, and operators can inspect the result through dedicated Rust tools.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="section-heading">
+        <p class="eyebrow">Project surfaces</p>
+        <h2>One storage format, two product faces</h2>
+      </div>
+      <div class="grid two">
+        <article class="card feature">
+          <h3>Java SDK</h3>
+          <p>Integrate TinyLog into Java services with a business-facing logger API, config-driven appenders, masking, rotation, and direct <code>.tog</code> output.</p>
+          <ul>
+            <li>YAML and properties config loading</li>
+            <li>Console and file backends</li>
+            <li>Level filtering and masking rules</li>
+          </ul>
+        </article>
+        <article class="card feature">
+          <h3>Rust tools</h3>
+          <p>Convert plaintext logs into <code>.tog</code>, restore them back when needed, and inspect them through a vim-like viewer optimized for large files.</p>
+          <ul>
+            <li><code>tinylog-converter</code> for convert and reverse restore</li>
+            <li><code>tinylog-viewer</code> for browse, search, filter, and jump</li>
+            <li>Release packaging for direct binary download</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">Modules</p>
+        <h2>Clean boundaries across the repository</h2>
+      </div>
+      <div class="grid five">
+        <article class="mini-card"><h3>tinylog-core</h3><p>Domain model, codecs, and reader/writer contracts.</p></article>
+        <article class="mini-card"><h3>tinylog-sdk</h3><p>Java API, logger factories, and `.tog` writing integration.</p></article>
+        <article class="mini-card"><h3>tinylog-rust-common</h3><p>Shared format parsing and protobuf support.</p></article>
+        <article class="mini-card"><h3>tinylog-converter</h3><p>CLI for plaintext-to-`.tog` and reverse restore workflows.</p></article>
+        <article class="mini-card"><h3>tinylog-viewer</h3><p>Interactive large-file viewer with trunk-ordered search.</p></article>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="section-heading">
+        <p class="eyebrow">Quick start</p>
+        <h2>Try the current prototype fast</h2>
+      </div>
+      <div class="code-grid">
+        <article class="code-card">
+          <h3>Convert a log</h3>
+          <pre><code>scripts/tinylog-convert.sh normal.log
+scripts/tinylog-convert.sh --reverse normal.tog</code></pre>
+        </article>
+        <article class="code-card">
+          <h3>Open a TinyLog file</h3>
+          <pre><code>scripts/tinylog-view.sh normal.tog
+scripts/tinylog-open.sh normal.log</code></pre>
+        </article>
+        <article class="code-card">
+          <h3>Build a release package</h3>
+          <pre><code>scripts/package-release.sh</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">More details</p>
+        <h2>Docs, source, and release assets</h2>
+      </div>
+      <div class="link-list">
+        <a class="link-card" href="https://github.com/huimang/tinylog/blob/main/README.md">
+          <strong>README</strong>
+          <span>Project overview and manual commands</span>
+        </a>
+        <a class="link-card" href="https://github.com/huimang/tinylog/blob/main/docs/log-storage-structure.md">
+          <strong>Storage structure</strong>
+          <span>Header fields, trunk layout, and file semantics</span>
+        </a>
+        <a class="link-card" href="https://github.com/huimang/tinylog/blob/main/docs/java-logging-configuration.md">
+          <strong>Java logging config</strong>
+          <span>SDK configuration details and appender behavior</span>
+        </a>
+        <a class="link-card" href="https://github.com/huimang/tinylog/releases/tag/v0.1.0">
+          <strong>Release v0.1.0</strong>
+          <span>Binary package and release notes entry point</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>TinyLog v0.1.0 · MIT License · <a href="https://github.com/huimang/tinylog">github.com/huimang/tinylog</a></p>
+  </footer>
+</body>
+</html>
