@@ -67,3 +67,20 @@ sdk: introduce business-facing logger factory
 2. Confirm it is in a stable state
 3. Create exactly one commit for that feature
 4. If multiple intermediate commits exist, recombine them into one clean commit before continuing
+
+## Release Conventions
+
+### 1. Versioning
+
+- TinyLog releases follow `MAJOR.MINOR.PATCH`
+- For small optimizations and bug fixes, increment `PATCH`
+- For backward-compatible feature additions, increment `MINOR` and reset `PATCH` to `0`
+- For breaking or materially incompatible upgrades, increment `MAJOR` and reset `MINOR` and `PATCH` to `0`
+
+Examples:
+
+```text
+0.1.0 -> 0.1.1   bug fix
+0.1.0 -> 0.2.0   backward-compatible feature
+0.1.0 -> 1.0.0   breaking upgrade
+```

@@ -39,6 +39,16 @@ The project is initialized around two product surfaces:
 
 Repository collaboration rules, engineering conventions, and commit conventions live in [`AGENTS.md`](AGENTS.md).
 
+## Release Versioning
+
+TinyLog releases follow `MAJOR.MINOR.PATCH`.
+
+- Increment `PATCH` for small optimizations and bug fixes
+- Increment `MINOR` and reset `PATCH` to `0` for backward-compatible features
+- Increment `MAJOR` and reset `MINOR` and `PATCH` to `0` for breaking or materially incompatible upgrades
+
+The current release target is `v0.1.0`.
+
 ## Current Technical Direction
 
 - **Java namespace**: `com.huimang.tinylog`
@@ -183,6 +193,20 @@ The viewer stays open like a lightweight vim-style browser. The display area is 
 
 ```bash
 cargo test -p tinylog-converter convert_plaintext_log_writes_parseable_tog
+```
+
+## Release Packaging
+
+Build the current release binaries and pack them into a versioned archive with:
+
+```bash
+scripts/package-release.sh
+```
+
+For `v0.1.0` on Darwin arm64, the generated archive is:
+
+```text
+dist/v0.1.0/tinylog-v0.1.0-darwin-arm64.tar.gz
 ```
 
 ## Near-Term Roadmap

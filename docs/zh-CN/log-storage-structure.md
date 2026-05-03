@@ -51,7 +51,8 @@
 ### Header 说明
 
 1. `version` 来自 Maven 版本号，例如：
-   - `0.1.0-SNAPSHOT` -> `[0, 1, 0]`
+   - `0.1.0` -> `[0, 1, 0]`
+   - `0.1.1-SNAPSHOT` -> `[0, 1, 1]`
    - `-SNAPSHOT` 这类后缀不进入 header
 2. `trunkSizeKb` 以无符号 16 位整数存储，单位是 KB
 3. 设计上允许的 trunk 上限是 **64 MB**，实现时需要做范围校验

@@ -51,7 +51,8 @@ The main `.tog` file begins with a fixed-size header in **big-endian** order.
 ### Header Notes
 
 1. `version` comes from the Maven project version, for example:
-   - `0.1.0-SNAPSHOT` -> `[0, 1, 0]`
+   - `0.1.0` -> `[0, 1, 0]`
+   - `0.1.1-SNAPSHOT` -> `[0, 1, 1]`
    - qualifiers such as `-SNAPSHOT` are ignored
 2. `trunkSizeKb` is stored as an unsigned 16-bit value in KB
 3. The intended upper bound is **64 MB**, and the field should be validated accordingly during implementation
