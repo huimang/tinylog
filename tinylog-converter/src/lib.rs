@@ -9,7 +9,9 @@ use std::{
 
 use chrono::{NaiveDateTime, TimeZone, Utc};
 
-use tinylog_rust_common::format::{CompressionAlgorithm, LogLevel};
+use tinylog_rust_common::format::{
+    self, scan_file_index, scan_trunks_in_order, CompressionAlgorithm, LogLevel,
+};
 
 const FILE_EXTENSION: &str = ".tog";
 const DEFAULT_TRUNK_SIZE_KB: u16 = 512;
@@ -123,9 +125,14 @@ impl WorkerTempDirectory {
 
 /// Runs the Rust plaintext-to-TinyLog converter CLI.
 pub fn run_convert_cli(arguments: &[String]) -> Result<(), String> {
+    if let Some(command) = arguments.first() {
+        if command == "--reverse" || command == "reverse" {
+            return run_restore_cli(&arguments[1..]);
+        }
+    }
     if arguments.len() < 2 || arguments.len() > 4 {
         return Err(
-            "usage: tinylog-converter <input.log> <output.tog> [algorithmId] [trunkSizeKb]"
+            "usage: tinylog-converter <input.log> <output.tog> [algorithmId] [trunkSizeKb]\n       tinylog-converter --reverse <input.tog> [output.log]"
                 .to_string(),
         );
     }
@@ -151,6 +158,32 @@ pub fn run_convert_cli(arguments: &[String]) -> Result<(), String> {
         input_path.display(),
         output_path.display(),
         compression_algorithm.display_name()
+    );
+    print_conversion_summary(&summary, elapsed);
+    Ok(())
+}
+
+fn run_restore_cli(arguments: &[String]) -> Result<(), String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err("usage: tinylog-converter --reverse <input.tog> [output.log]".to_string());
+    }
+
+    let input_path = Path::new(&arguments[0]);
+    let output_path = if arguments.len() == 2 {
+        PathBuf::from(&arguments[1])
+    } else if let Some(stem) = input_path.file_stem() {
+        input_path.with_file_name(format!("{}.log", stem.to_string_lossy()))
+    } else {
+        PathBuf::from(format!("{}.log", input_path.display()))
+    };
+    let started_at = Instant::now();
+    let summary = restore_plaintext_log(input_path, &output_path)?;
+    let elapsed = started_at.elapsed();
+
+    println!(
+        "restored {} to {}",
+        input_path.display(),
+        output_path.display()
     );
     print_conversion_summary(&summary, elapsed);
     Ok(())
@@ -265,6 +298,62 @@ fn convert_plaintext_log(
         source_size_bytes,
         output_size_bytes,
     })
+}
+
+fn restore_plaintext_log(
+    tinylog_path: &Path,
+    plain_text_log_path: &Path,
+) -> Result<ConversionSummary, String> {
+    validate_tinylog_path(tinylog_path)?;
+    let file_index = scan_file_index(&tinylog_path.to_string_lossy())?;
+    let source_size_bytes = file_size_bytes(tinylog_path)?;
+    if let Some(parent) = plain_text_log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    let mut output = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(plain_text_log_path)
+        .map_err(|error| format!("failed to create {}: {error}", plain_text_log_path.display()))?;
+    let trunk_order: Vec<usize> = (0..file_index.trunk_count()).collect();
+    scan_trunks_in_order(&file_index, &trunk_order, |_, entries| {
+        for entry in entries {
+            write_plaintext_entry(&mut output, entry)?;
+        }
+        Ok(())
+    })?;
+    output
+        .flush()
+        .map_err(|error| format!("failed to flush {}: {error}", plain_text_log_path.display()))?;
+    let output_size_bytes = file_size_bytes(plain_text_log_path)?;
+    Ok(ConversionSummary {
+        source_size_bytes,
+        output_size_bytes,
+    })
+}
+
+fn write_plaintext_entry(
+    output: &mut impl Write,
+    entry: &format::ParsedLogEntry,
+) -> Result<(), String> {
+    let timestamp = format::format_timestamp_millis(entry.timestamp_millis)?;
+    let mut content_lines = entry.content.split('\n');
+    let first_line = content_lines.next().unwrap_or("");
+    writeln!(
+        output,
+        "{} {} {}",
+        timestamp,
+        entry.level.display_name(),
+        first_line
+    )
+    .map_err(|error| format!("failed to write restored log line: {error}"))?;
+    for line in content_lines {
+        writeln!(output, "{line}")
+            .map_err(|error| format!("failed to write restored continuation line: {error}"))?;
+    }
+    Ok(())
 }
 
 fn should_use_parallel_conversion(source_size_bytes: u64) -> bool {
@@ -1428,9 +1517,9 @@ mod tests {
 
     use super::{
         build_conversion_plan, build_worker_batches, convert_plaintext_log, format_duration,
-        format_size, parse_level_and_message, should_use_parallel_conversion,
-        validate_tinylog_path, CompressionAlgorithm, ConversionSummary, ProgressReporter,
-        PARALLEL_CONVERSION_THRESHOLD_BYTES,
+        format_size, parse_level_and_message, restore_plaintext_log, run_convert_cli,
+        should_use_parallel_conversion, validate_tinylog_path, CompressionAlgorithm,
+        ConversionSummary, ProgressReporter, PARALLEL_CONVERSION_THRESHOLD_BYTES,
     };
 
     #[test]
@@ -1668,6 +1757,88 @@ mod tests {
 
         fs::remove_file(input_path).ok();
         fs::remove_file(output_path).ok();
+    }
+
+    #[test]
+    fn restore_plaintext_log_rebuilds_plaintext_lines() {
+        let input_path = unique_temp_path("restore-input.log");
+        let tinylog_path = unique_temp_path("restore-input.tog");
+        let restored_path = unique_temp_path("restore-output.log");
+        fs::write(
+            &input_path,
+            concat!(
+                "2026-05-01 22:01:00,253 [ERROR] request failed\n",
+                "java.lang.IllegalStateException: boom\n",
+                "\tat example.Service.handle(Service.java:42)\n",
+                "2026-05-01 22:01:00,278 [INFO] recovered\n"
+            ),
+        )
+        .expect("write restore input");
+        let mut progress_output = Vec::new();
+        let mut progress_reporter = ProgressReporter::new(&mut progress_output);
+        convert_plaintext_log(
+            &input_path,
+            &tinylog_path,
+            CompressionAlgorithm::Gzip,
+            512,
+            &mut progress_reporter,
+        )
+        .expect("convert input to tog");
+
+        let summary = restore_plaintext_log(&tinylog_path, &restored_path).expect("restore plaintext");
+        let restored = fs::read_to_string(&restored_path).expect("read restored log");
+
+        assert!(restored.contains("2026-05-01 22:01:00,253 [ERROR] request failed"));
+        assert!(restored.contains("java.lang.IllegalStateException: boom"));
+        assert!(restored.contains("\tat example.Service.handle(Service.java:42)"));
+        assert!(restored.contains("2026-05-01 22:01:00,278 [INFO] recovered"));
+        assert_eq!(summary.source_size_bytes, fs::metadata(&tinylog_path).expect("tog metadata").len());
+        assert_eq!(
+            summary.output_size_bytes,
+            fs::metadata(&restored_path).expect("restored metadata").len()
+        );
+
+        fs::remove_file(input_path).ok();
+        fs::remove_file(tinylog_path).ok();
+        fs::remove_file(restored_path).ok();
+    }
+
+    #[test]
+    fn run_convert_cli_supports_reverse_mode_with_default_output() {
+        let input_path = unique_temp_path("reverse-cli.log");
+        let tinylog_path = unique_temp_path("reverse-cli.tog");
+        fs::write(
+            &input_path,
+            "2026-05-01 22:01:00,253 [INFO] service started\n",
+        )
+        .expect("write input");
+        let mut progress_output = Vec::new();
+        let mut progress_reporter = ProgressReporter::new(&mut progress_output);
+        convert_plaintext_log(
+            &input_path,
+            &tinylog_path,
+            CompressionAlgorithm::Gzip,
+            512,
+            &mut progress_reporter,
+        )
+        .expect("convert input to tog");
+
+        run_convert_cli(&[
+            "--reverse".to_string(),
+            tinylog_path.to_string_lossy().into_owned(),
+        ])
+        .expect("run reverse cli");
+
+        let restored_path = tinylog_path.with_file_name(format!(
+            "{}.log",
+            tinylog_path.file_stem().expect("file stem").to_string_lossy()
+        ));
+        let restored = fs::read_to_string(&restored_path).expect("read restored file");
+        assert!(restored.contains("2026-05-01 22:01:00,253 [INFO] service started"));
+
+        fs::remove_file(input_path).ok();
+        fs::remove_file(tinylog_path).ok();
+        fs::remove_file(restored_path).ok();
     }
 
     fn planned_trunk(
