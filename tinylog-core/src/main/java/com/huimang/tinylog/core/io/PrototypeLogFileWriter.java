@@ -1,13 +1,12 @@
 package com.huimang.tinylog.core.io;
 
 import com.huimang.tinylog.core.model.LogRecord;
-import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Objects;
 
 /**
@@ -15,24 +14,22 @@ import java.util.Objects;
  */
 public final class PrototypeLogFileWriter implements LogWriter {
     private static final String MAIN_FILE_MODE = "rw";
-    private static final String BUFFER_FILE_PREFIX = "log-buffer-";
-    private static final String BUFFER_FILE_SUFFIX = ".tmp";
 
-    private final Path path;
     private final CompressionAlgorithm compressionAlgorithm;
-    private final int trunkSizeKb;
     private final int trunkSizeBytes;
+    private final Path bufferPath;
     private final RandomAccessFile mainFile;
+    private final RandomAccessFile bufferFile;
+    private final ByteArrayOutputStream rawTrunkBuffer;
+    private final DataOutputStream rawTrunkOutput;
+    private final Thread shutdownHook;
     private boolean closed;
     private long baseTimestampUtcMillis = -1L;
     private long lastTimestampUtcMillis = Long.MIN_VALUE;
     private long totalLogLineCount;
     private int trunkCount;
-    private int nextTrunkIndex;
-    private Path currentBufferPath;
-    private DataOutputStream currentBufferOutput;
-    private int currentBufferBytes;
-    private int currentBufferLineCount;
+    private int currentTrunkBytes;
+    private int currentTrunkLineCount;
 
     /**
      * Creates a writer that uses the default compression and trunk size.
@@ -53,24 +50,35 @@ public final class PrototypeLogFileWriter implements LogWriter {
      */
     public PrototypeLogFileWriter(Path path, CompressionAlgorithm compressionAlgorithm, int trunkSizeKb)
             throws IOException {
-        this.path = Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(path, "path");
         this.compressionAlgorithm = Objects.requireNonNull(compressionAlgorithm, "compressionAlgorithm");
-        this.trunkSizeKb = PrototypeLogFileFormat.validateTrunkSizeKb(trunkSizeKb);
-        this.trunkSizeBytes = PrototypeLogFileFormat.trunkSizeBytes(this.trunkSizeKb);
+        int validatedTrunkSizeKb = PrototypeLogFileFormat.validateTrunkSizeKb(trunkSizeKb);
+        this.trunkSizeBytes = PrototypeLogFileFormat.trunkSizeBytes(validatedTrunkSizeKb);
         Path parent = path.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
+        this.bufferPath = PrototypeLogFileFormat.bufferFilePath(path);
         this.mainFile = new RandomAccessFile(path.toFile(), MAIN_FILE_MODE);
+        this.bufferFile = new RandomAccessFile(bufferPath.toFile(), MAIN_FILE_MODE);
+        this.rawTrunkBuffer = new ByteArrayOutputStream(trunkSizeBytes);
+        this.rawTrunkOutput = new DataOutputStream(rawTrunkBuffer);
         this.mainFile.setLength(0L);
+        this.bufferFile.setLength(0L);
         PrototypeLogFileFormat.writeHeader(
                 mainFile,
                 compressionAlgorithm,
-                this.trunkSizeKb,
+                validatedTrunkSizeKb,
                 0L,
                 0L,
                 0);
-        openNextBuffer();
+        this.shutdownHook = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                closeQuietlyOnShutdown();
+            }
+        }, "tinylog-prototype-writer-shutdown");
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
     }
 
     @Override
@@ -79,29 +87,28 @@ public final class PrototypeLogFileWriter implements LogWriter {
         Objects.requireNonNull(record, "record");
         ensureTimestampOrder(record);
         initializeBaseTimestamp(record);
-        if (currentBufferLineCount == PrototypeLogFileFormat.MAX_TRUNK_LOG_LINE_COUNT) {
-            flushCurrentTrunk(true);
+        if (currentTrunkLineCount == PrototypeLogFileFormat.MAX_TRUNK_LOG_LINE_COUNT) {
+            flushCurrentTrunk();
         }
         int lineBytes = PrototypeLogFileFormat.measureRawLogLine(record);
         if (wouldExceedTrunkSize(lineBytes)) {
-            flushCurrentTrunk(true);
+            flushCurrentTrunk();
         }
-        PrototypeLogFileFormat.writeRawLogLine(currentBufferOutput, record, baseTimestampUtcMillis);
-        currentBufferBytes += lineBytes;
-        currentBufferLineCount++;
+        PrototypeLogFileFormat.writeRawLogLine(rawTrunkOutput, record, baseTimestampUtcMillis);
+        appendBufferedRecord(record);
+        currentTrunkBytes += lineBytes;
+        currentTrunkLineCount++;
         lastTimestampUtcMillis = record.getTimestampMillis();
-        if (currentBufferBytes >= trunkSizeBytes) {
-            flushCurrentTrunk(true);
+        if (currentTrunkBytes >= trunkSizeBytes) {
+            flushCurrentTrunk();
         }
     }
 
     @Override
     public void flush() throws IOException {
         ensureOpen();
-        if (currentBufferOutput != null) {
-            currentBufferOutput.flush();
-        }
-        flushCurrentTrunk(true);
+        rawTrunkOutput.flush();
+        flushCurrentTrunk();
     }
 
     @Override
@@ -110,58 +117,37 @@ public final class PrototypeLogFileWriter implements LogWriter {
             return;
         }
         try {
-            if (currentBufferOutput != null) {
-                currentBufferOutput.flush();
-            }
-            flushCurrentTrunk(false);
-            closeAndDeleteEmptyBuffer();
+            rawTrunkOutput.flush();
+            flushCurrentTrunk();
         } finally {
             closed = true;
+            rawTrunkOutput.close();
+            bufferFile.close();
             mainFile.close();
+            unregisterShutdownHook();
         }
-    }
-
-    /**
-     * Opens the next raw trunk buffer file.
-     */
-    private void openNextBuffer() throws IOException {
-        currentBufferPath = resolveBufferPath(nextTrunkIndex);
-        Files.deleteIfExists(currentBufferPath);
-        currentBufferOutput =
-                new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(currentBufferPath)));
-        currentBufferBytes = 0;
-        currentBufferLineCount = 0;
     }
 
     /**
      * Persists the current raw buffer as one compressed trunk.
      */
-    private void flushCurrentTrunk(boolean openNextBuffer) throws IOException {
-        if (currentBufferLineCount == 0) {
-            if (openNextBuffer && currentBufferOutput == null) {
-                openNextBuffer();
-            }
+    private void flushCurrentTrunk() throws IOException {
+        if (currentTrunkLineCount == 0) {
             return;
         }
-        currentBufferOutput.close();
-        currentBufferOutput = null;
-        byte[] rawTrunkBytes = Files.readAllBytes(currentBufferPath);
+        byte[] rawTrunkBytes = rawTrunkBuffer.toByteArray();
         byte[] compressedTrunkBytes = compressionAlgorithm.compress(rawTrunkBytes);
         mainFile.seek(mainFile.length());
-        mainFile.writeShort(currentBufferLineCount);
+        mainFile.writeShort(currentTrunkLineCount);
         mainFile.writeInt(compressedTrunkBytes.length);
         mainFile.write(compressedTrunkBytes);
-        totalLogLineCount += currentBufferLineCount;
+        totalLogLineCount += currentTrunkLineCount;
         trunkCount++;
         updateHeaderCounters();
-        Files.deleteIfExists(currentBufferPath);
-        nextTrunkIndex++;
-        currentBufferBytes = 0;
-        currentBufferLineCount = 0;
-        currentBufferPath = null;
-        if (openNextBuffer) {
-            openNextBuffer();
-        }
+        clearBufferFile();
+        rawTrunkBuffer.reset();
+        currentTrunkBytes = 0;
+        currentTrunkLineCount = 0;
     }
 
     /**
@@ -183,29 +169,6 @@ public final class PrototypeLogFileWriter implements LogWriter {
         mainFile.seek(mainFile.length());
     }
 
-    /**
-     * Closes and removes the empty current buffer file.
-     */
-    private void closeAndDeleteEmptyBuffer() throws IOException {
-        if (currentBufferOutput != null) {
-            currentBufferOutput.close();
-            currentBufferOutput = null;
-        }
-        if (currentBufferPath != null) {
-            Files.deleteIfExists(currentBufferPath);
-            currentBufferPath = null;
-        }
-    }
-
-    /**
-     * Resolves the temporary buffer file path for one trunk index.
-     */
-    private Path resolveBufferPath(int trunkIndex) {
-        String fileName = BUFFER_FILE_PREFIX + trunkIndex + BUFFER_FILE_SUFFIX;
-        Path parent = path.getParent();
-        return parent == null ? Paths.get(fileName) : parent.resolve(fileName);
-    }
-
     private void ensureTimestampOrder(LogRecord record) {
         if (lastTimestampUtcMillis != Long.MIN_VALUE && record.getTimestampMillis() < lastTimestampUtcMillis) {
             throw new IllegalArgumentException("records must be appended in timestamp order");
@@ -220,13 +183,44 @@ public final class PrototypeLogFileWriter implements LogWriter {
         updateBaseTimestamp();
     }
 
+    private void appendBufferedRecord(LogRecord record) throws IOException {
+        if (bufferFile.length() == 0L) {
+            bufferFile.seek(0L);
+            bufferFile.writeLong(baseTimestampUtcMillis);
+        } else {
+            bufferFile.seek(bufferFile.length());
+        }
+        PrototypeLogFileFormat.writeRawLogLine(bufferFile, record, baseTimestampUtcMillis);
+    }
+
+    private void clearBufferFile() throws IOException {
+        bufferFile.setLength(0L);
+        bufferFile.seek(0L);
+    }
+
     private boolean wouldExceedTrunkSize(int lineBytes) {
-        return currentBufferLineCount > 0 && currentBufferBytes + lineBytes > trunkSizeBytes;
+        return currentTrunkLineCount > 0 && currentTrunkBytes + lineBytes > trunkSizeBytes;
     }
 
     private void ensureOpen() {
         if (closed) {
             throw new IllegalStateException("writer is already closed");
+        }
+    }
+
+    private void unregisterShutdownHook() {
+        try {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook);
+        } catch (IllegalStateException ignored) {
+            // JVM shutdown is already in progress.
+        }
+    }
+
+    private void closeQuietlyOnShutdown() {
+        try {
+            close();
+        } catch (IOException ignored) {
+            // Best-effort flush during shutdown.
         }
     }
 }

@@ -6,6 +6,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -25,6 +26,11 @@ final class PrototypeLogFileFormat {
      * Defines the dedicated tinylog file extension for persisted files.
      */
     static final String FILE_EXTENSION = ".tog";
+
+    /**
+     * Defines the sidecar file extension used for buffered yet-unmerged raw records.
+     */
+    static final String BUFFER_FILE_EXTENSION = ".buffer";
 
     /**
      * Defines the default compression algorithm used by the writer and converter.
@@ -135,6 +141,13 @@ final class PrototypeLogFileFormat {
      */
     static int trunkSizeBytes(int trunkSizeKb) {
         return validateTrunkSizeKb(trunkSizeKb) * BYTES_PER_KB;
+    }
+
+    /**
+     * Returns the sidecar buffer file path used by the Java writer.
+     */
+    static Path bufferFilePath(Path path) {
+        return path.resolveSibling(path.getFileName().toString() + BUFFER_FILE_EXTENSION);
     }
 
     /**

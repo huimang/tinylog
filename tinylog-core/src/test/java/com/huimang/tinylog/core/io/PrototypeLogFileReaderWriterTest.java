@@ -8,9 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.huimang.tinylog.core.model.LogLevel;
 import com.huimang.tinylog.core.model.LogQuery;
 import com.huimang.tinylog.core.model.LogRecord;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -66,14 +68,44 @@ public class PrototypeLogFileReaderWriterTest {
     }
 
     @Test
-    void shouldDeleteTemporaryBufferFilesAfterClose() throws IOException {
+    void shouldClearBufferSidecarAfterClose() throws IOException {
         Path path = tempDir.resolve("cleanup.tog");
         try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path, CompressionAlgorithm.GZIP, 1)) {
             writer.append(new LogRecord(1_777_672_860_253L, LogLevel.INFO, "app", "main", "alpha", null));
         }
 
-        assertFalse(Files.exists(tempDir.resolve("log-buffer-0.tmp")));
-        assertFalse(Files.exists(tempDir.resolve("log-buffer-1.tmp")));
+        Path bufferPath = PrototypeLogFileFormat.bufferFilePath(path);
+        assertTrue(Files.exists(bufferPath));
+        assertEquals(0L, Files.size(bufferPath));
+    }
+
+    @Test
+    void shouldAppendBufferedSidecarRecordsWhenReading() throws IOException {
+        Path path = tempDir.resolve("buffered-read.tog");
+        try (PrototypeLogFileWriter writer = new PrototypeLogFileWriter(path, CompressionAlgorithm.GZIP, 1)) {
+            writer.append(new LogRecord(1_000L, LogLevel.INFO, "app", "main", repeat('a', 2_000), null));
+        }
+
+        Path bufferPath = PrototypeLogFileFormat.bufferFilePath(path);
+        try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(
+                bufferPath,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE))) {
+            output.writeLong(1_000L);
+            PrototypeLogFileFormat.writeRawLogLine(
+                    output,
+                    new LogRecord(1_025L, LogLevel.WARN, "app", "main", "buffered-tail", null),
+                    1_000L);
+        }
+
+        List<LogRecord> records;
+        try (PrototypeLogFileReader reader = new PrototypeLogFileReader(path)) {
+            records = collect(reader.scan());
+        }
+
+        assertEquals(2, records.size());
+        assertEquals("buffered-tail", records.get(1).getMessage());
+        assertEquals(LogLevel.WARN, records.get(1).getLevel());
     }
 
     @Test

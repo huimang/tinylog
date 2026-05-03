@@ -64,6 +64,7 @@ public final class PrototypeLogFileReader implements LogReader {
         private final CompressionAlgorithm compressionAlgorithm;
         private final LogQuery query;
         private final long baseTimestampUtcMillis;
+        private List<LogRecord> bufferedTailRecords;
         private int remainingTrunks;
         private List<LogRecord> currentTrunkRecords;
         private int currentTrunkIndex;
@@ -75,18 +76,32 @@ public final class PrototypeLogFileReader implements LogReader {
          * Opens one file stream and reads the trunk-based header.
          */
         private PrototypeLogIterator(Path path, LogQuery query) throws IOException {
-            this.input = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)));
             this.query = query;
             this.currentTrunkRecords = Collections.emptyList();
+            this.bufferedTailRecords = Collections.emptyList();
+            DataInputStream openedInput = null;
+            CompressionAlgorithm parsedCompressionAlgorithm = CompressionAlgorithm.GZIP;
+            long parsedBaseTimestampUtcMillis = 0L;
+            int parsedRemainingTrunks = 0;
             try {
-                Header header = readHeader(input);
-                this.compressionAlgorithm = header.compressionAlgorithm;
-                this.baseTimestampUtcMillis = header.baseTimestampUtcMillis;
-                this.remainingTrunks = header.trunkCount;
+                if (Files.exists(path) && Files.size(path) > 0L) {
+                    openedInput = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)));
+                    Header header = readHeader(openedInput);
+                    parsedCompressionAlgorithm = header.compressionAlgorithm;
+                    parsedBaseTimestampUtcMillis = header.baseTimestampUtcMillis;
+                    parsedRemainingTrunks = header.trunkCount;
+                }
+                this.bufferedTailRecords = readBufferedTailRecords(path);
             } catch (IOException exception) {
-                closeQuietly();
+                if (openedInput != null) {
+                    openedInput.close();
+                }
                 throw exception;
             }
+            this.input = openedInput;
+            this.compressionAlgorithm = parsedCompressionAlgorithm;
+            this.baseTimestampUtcMillis = parsedBaseTimestampUtcMillis;
+            this.remainingTrunks = parsedRemainingTrunks;
         }
 
         @Override
@@ -125,6 +140,12 @@ public final class PrototypeLogFileReader implements LogReader {
                         continue;
                     }
                     if (remainingTrunks == 0) {
+                        if (!bufferedTailRecords.isEmpty()) {
+                            currentTrunkRecords = bufferedTailRecords;
+                            bufferedTailRecords = Collections.emptyList();
+                            currentTrunkIndex = 0;
+                            continue;
+                        }
                         exhausted = true;
                         closeQuietly();
                         return;
@@ -218,7 +239,9 @@ public final class PrototypeLogFileReader implements LogReader {
          */
         private void closeQuietly() {
             try {
-                input.close();
+                if (input != null) {
+                    input.close();
+                }
             } catch (IOException ignored) {
                 // Nothing to do when closing an exhausted iterator.
             }
@@ -251,6 +274,37 @@ public final class PrototypeLogFileReader implements LogReader {
                 this.baseTimestampUtcMillis = baseTimestampUtcMillis;
                 this.trunkCount = trunkCount;
             }
+        }
+    }
+
+    private static List<LogRecord> readBufferedTailRecords(Path path) throws IOException {
+        Path bufferPath = PrototypeLogFileFormat.bufferFilePath(path);
+        if (!Files.exists(bufferPath) || Files.size(bufferPath) == 0L) {
+            return Collections.emptyList();
+        }
+        try (DataInputStream input = new DataInputStream(new BufferedInputStream(Files.newInputStream(bufferPath)))) {
+            long baseTimestampUtcMillis = input.readLong();
+            List<LogRecord> records = new ArrayList<LogRecord>();
+            while (true) {
+                try {
+                    long offsetMillis = PrototypeLogFileFormat.readUnsignedInt(input);
+                    int persistedLevelId = input.readUnsignedByte();
+                    int contentLength = input.readInt();
+                    if (contentLength < 0) {
+                        throw new IOException("buffered log content length must not be negative");
+                    }
+                    byte[] contentBytes = new byte[contentLength];
+                    input.readFully(contentBytes);
+                    records.add(PrototypeLogFileFormat.toRecord(
+                            baseTimestampUtcMillis,
+                            offsetMillis,
+                            persistedLevelId,
+                            new String(contentBytes, PrototypeLogFileFormat.CONTENT_CHARSET)));
+                } catch (EOFException endOfFile) {
+                    break;
+                }
+            }
+            return Collections.unmodifiableList(records);
         }
     }
 }

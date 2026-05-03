@@ -79,12 +79,31 @@ public final class PlainTextLogToTinylogConverter {
                         new PrototypeLogFileWriter(tinylogPath, compressionAlgorithm, trunkSizeKb)) {
             int lineNumber = 0;
             String line;
+            LogRecord pendingRecord = null;
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
                 if (line.trim().isEmpty()) {
+                    if (pendingRecord != null) {
+                        pendingRecord = appendContinuationLine(pendingRecord, "");
+                    }
                     continue;
                 }
-                writer.append(parseLine(plainTextLogPath, lineNumber, line));
+                if (isRecordStartLine(line)) {
+                    if (pendingRecord != null) {
+                        writer.append(pendingRecord);
+                    }
+                    pendingRecord = parseLine(plainTextLogPath, lineNumber, line);
+                    continue;
+                }
+                if (pendingRecord == null) {
+                    throw new IllegalArgumentException("invalid log line at "
+                            + plainTextLogPath + ":" + lineNumber
+                            + ", expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'");
+                }
+                pendingRecord = appendContinuationLine(pendingRecord, line);
+            }
+            if (pendingRecord != null) {
+                writer.append(pendingRecord);
             }
         }
     }
@@ -117,11 +136,50 @@ public final class PlainTextLogToTinylogConverter {
     }
 
     private void validateLineShape(Path plainTextLogPath, int lineNumber, String line) {
-        if (line.length() <= TIMESTAMP_TEXT_LENGTH + 1 || line.charAt(TIMESTAMP_TEXT_LENGTH) != TIMESTAMP_SEPARATOR) {
+        if (!isRecordStartLine(line)) {
             throw new IllegalArgumentException("invalid log line at "
                     + plainTextLogPath + ":" + lineNumber
                     + ", expected '<yyyy-MM-dd HH:mm:ss,SSS> <message>'");
         }
+    }
+
+    private boolean isRecordStartLine(String line) {
+        if (line.length() <= TIMESTAMP_TEXT_LENGTH || line.charAt(TIMESTAMP_TEXT_LENGTH) != TIMESTAMP_SEPARATOR) {
+            return false;
+        }
+        for (int index = 0; index < TIMESTAMP_TEXT_LENGTH; index++) {
+            char value = line.charAt(index);
+            switch (index) {
+                case 4:
+                case 7:
+                    if (value != '-') {
+                        return false;
+                    }
+                    break;
+                case 10:
+                    if (value != ' ') {
+                        return false;
+                    }
+                    break;
+                case 13:
+                case 16:
+                    if (value != ':') {
+                        return false;
+                    }
+                    break;
+                case 19:
+                    if (value != ',') {
+                        return false;
+                    }
+                    break;
+                default:
+                    if (!Character.isDigit(value)) {
+                        return false;
+                    }
+                    break;
+            }
+        }
+        return true;
     }
 
     private long parseTimestampMillis(Path plainTextLogPath, int lineNumber, String line) {
@@ -154,6 +212,16 @@ public final class PlainTextLogToTinylogConverter {
             message = message.substring(1);
         }
         return new ParsedPlainTextLine(level, message);
+    }
+
+    private LogRecord appendContinuationLine(LogRecord record, String line) {
+        return new LogRecord(
+                record.getTimestampMillis(),
+                record.getLevel(),
+                record.getSource(),
+                record.getContext(),
+                record.getMessage() + "\n" + line,
+                record.getAttributes());
     }
 
     private LogLevel tryParseLevelToken(String levelToken) {
